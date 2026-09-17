@@ -4,8 +4,6 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { Building } from "@/game/world";
 import {
   BUILDINGS,
-  GRID_H,
-  GRID_W,
   START,
   TILE,
   bfs,
@@ -46,8 +44,17 @@ import {
   xpForNext,
 } from "@/game/character";
 import { clearSave, hasSave, loadGame, saveGame } from "@/game/save";
-import { drawFrame, initCharacterSheet, makeStaticLayer } from "@/game/render";
-import type { PlayerColors } from "@/game/render";
+import {
+  drawFrame,
+  drawMinimap,
+  makeCityTextures,
+} from "@/game/render";
+import type { CityTextures, PlayerColors } from "@/game/render";
+import { initSheets } from "@/game/sprites";
+import { clampCamera, createCamera, screenToWorld, updateCamera } from "@/game/camera";
+import type { Camera } from "@/game/camera";
+import { createNpcs, createVehicles, updateNpcs, updateVehicles } from "@/game/entities";
+import type { Npc, Vehicle } from "@/game/entities";
 
 type Dialog =
   | { kind: "building"; b: Building }
@@ -63,7 +70,7 @@ interface PanelProps {
 
 const hourOf = (s: GameState) => Math.floor(s.minutes / 60);
 
-const cardCls = "rounded-lg border border-neutral-700 bg-neutral-900 p-3";
+const cardCls = "rounded-lg border border-neutral-700 bg-neutral-900/95 p-3";
 const actionBtn = (ok: boolean) =>
   `px-3 py-2 rounded-lg text-sm font-semibold border transition-colors ${
     ok
@@ -72,6 +79,8 @@ const actionBtn = (ok: boolean) =>
   }`;
 const ghostBtn =
   "px-3 py-2 rounded-lg text-sm border border-neutral-700 bg-neutral-800/70 hover:bg-neutral-800 text-neutral-200";
+const hudBtn =
+  "pointer-events-auto rounded-lg border border-neutral-700/80 bg-neutral-900/80 px-3 py-1.5 text-sm text-neutral-200 backdrop-blur-sm hover:bg-neutral-800";
 
 const WEATHER_ICONS = { clear: "☀️", overcast: "☁️", rain: "🌧️" } as const;
 
@@ -89,6 +98,22 @@ function playerColors(s: GameState): PlayerColors {
   };
 }
 
+function hintFor(
+  t: ReturnType<typeof findInteractive>,
+  s: GameState
+): string | null {
+  if (!t) return null;
+  if (s.dead) return null;
+  if (t.kind === "door" && t.b) {
+    const b = BUILDINGS.find((bb) => bb.id === t.b);
+    return `E — ${b?.name ?? "вход"}`;
+  }
+  if (t.kind === "bench") return "E — Отдохнуть 15 мин";
+  if (t.kind === "atm") return "E — Банкомат";
+  if (t.kind === "trash") return "E — Пошерстить";
+  return null;
+}
+
 export default function Game() {
   const [state, dispatch] = useReducer(reducer, undefined, initialState);
   const stateRef = useRef(state);
@@ -96,9 +121,10 @@ export default function Game() {
   const startedRef = useRef(false);
 
   const grid = useMemo(() => buildGrid(), []);
-  const [staticLayer, setStaticLayer] = useState<HTMLCanvasElement | null>(null);
+  const [textures, setTextures] = useState<CityTextures | null>(null);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const minimapRef = useRef<HTMLCanvasElement | null>(null);
   const keysRef = useRef<Record<string, boolean>>({});
   const pathRef = useRef<[number, number][]>([]);
   const hoverRef = useRef<[number, number] | null>(null);
@@ -113,12 +139,27 @@ export default function Game() {
   const animRef = useRef({ workUntil: 0, restUntil: 0 });
   const saveThrottleRef = useRef(0);
 
+  const camRef = useRef<Camera>(createCamera((START.x + 0.5) * TILE, (START.y + 0.5) * TILE));
+  const viewportRef = useRef({ vw: 1280, vh: 720, dpr: 1 });
+  const npcsRef = useRef<Npc[] | null>(null);
+  const vehiclesRef = useRef<Vehicle[] | null>(null);
+  const hintClockRef = useRef(0);
+
   const [dialog, setDialog] = useState<Dialog>(null);
   const [invOpen, setInvOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [started, setStarted] = useState(false);
+  const [hint, setHint] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimerRef = useRef(0);
   startedRef.current = started;
+
+  const showToast = (msg: string) => {
+    setToast(msg);
+    window.clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 2600);
+  };
 
   /* ---------- действия ---------- */
 
@@ -175,6 +216,16 @@ export default function Game() {
     dispatch({ type: "ride", on: !g.char.riding });
   };
 
+  const phoneAction = () => {
+    const g = stateRef.current;
+    if (g.dead) return;
+    if ((g.char.inventory.phone ?? 0) > 0) {
+      dispatch({ type: "call" });
+    } else {
+      showToast("📞 Нет телефона. Продаётся в магазине.");
+    }
+  };
+
   const tryStepRef = useRef(tryStep);
   tryStepRef.current = tryStep;
   const pressERef = useRef(pressE);
@@ -185,9 +236,34 @@ export default function Game() {
   /* ---------- эффекты ---------- */
 
   useEffect(() => {
-    setStaticLayer(makeStaticLayer());
-    initCharacterSheet(); // PNG-лист персонажа, один раз (singleton)
+    const tex = makeCityTextures();
+    initSheets();
+    setTextures(tex);
+    npcsRef.current = createNpcs(20);
+    vehiclesRef.current = createVehicles();
   }, []);
+
+  // полноэкранный canvas: размер = viewport x dpr
+  useEffect(() => {
+    const cv = canvasRef.current;
+    if (!cv) return;
+    const fit = () => {
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = cv.clientWidth || 1;
+      const h = cv.clientHeight || 1;
+      cv.width = Math.max(1, Math.floor(w * dpr));
+      cv.height = Math.max(1, Math.floor(h * dpr));
+      viewportRef.current = { vw: w, vh: h, dpr };
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    const ro = new ResizeObserver(fit);
+    ro.observe(cv);
+    return () => {
+      window.removeEventListener("resize", fit);
+      ro.disconnect();
+    };
+  }, [started]);
 
   // главный цикл
   useEffect(() => {
@@ -227,41 +303,54 @@ export default function Game() {
         }
       }
 
+      // живые обитатели
+      if (npcsRef.current) updateNpcs(npcsRef.current, dt, now);
+      if (vehiclesRef.current) updateVehicles(vehiclesRef.current, dt);
+
+      // плавная позиция
+      const m = moveRef.current;
+      const p = Math.min(1, (now - m.t0) / m.dur);
+      const rx = m.from.x + (m.to.x - m.from.x) * p;
+      const ry = m.from.y + (m.to.y - m.from.y) * p;
+
+      // камера
+      const cam = camRef.current;
+      const vp = viewportRef.current;
+      updateCamera(cam, (rx + 0.5) * TILE, (ry + 0.5) * TILE, dt);
+      clampCamera(cam, vp.vw, vp.vh);
+
+      const k = keysRef.current;
+      const dirKey =
+        k.KeyW || k.KeyS || k.KeyA || k.KeyD ||
+        k.ArrowUp || k.ArrowDown || k.ArrowLeft || k.ArrowRight;
+      const moving = dirKey || pathRef.current.length > 0;
+      const run = k.ShiftLeft || k.ShiftRight;
+      const mode: "idle" | "walk" | "run" | "work" | "rest" =
+        now < animRef.current.workUntil
+          ? "work"
+          : now < animRef.current.restUntil
+            ? "rest"
+            : g.char.riding
+              ? "run"
+              : moving
+                ? run && !g.char.riding
+                  ? "run"
+                  : "walk"
+                : "idle";
+      const target = !g.dead ? findInteractive(grid, g.x, g.y) : null;
+
       const cv = canvasRef.current;
-      if (cv && staticLayer) {
+      if (cv && textures) {
         const ctx = cv.getContext("2d");
         if (ctx) {
-          const m = moveRef.current;
-          const p = Math.min(1, (now - m.t0) / m.dur);
-          const rx = m.from.x + (m.to.x - m.from.x) * p;
-          const ry = m.from.y + (m.to.y - m.from.y) * p;
-          const k = keysRef.current;
-          const dirKey =
-            k.KeyW || k.KeyS || k.KeyA || k.KeyD ||
-            k.ArrowUp || k.ArrowDown || k.ArrowLeft || k.ArrowRight;
-          const moving = dirKey || pathRef.current.length > 0;
-          const run = k.ShiftLeft || k.ShiftRight;
-          const mode: "idle" | "walk" | "run" | "work" | "rest" =
-            now < animRef.current.workUntil
-              ? "work"
-              : now < animRef.current.restUntil
-                ? "rest"
-                : g.char.riding
-                  ? "run"
-                  : moving
-                    ? run && !g.char.riding
-                      ? "run"
-                      : "walk"
-                    : "idle";
-          const t = findInteractive(grid, g.x, g.y);
           drawFrame(
             ctx,
-            staticLayer,
+            textures,
             {
               state: g,
               path: pathRef.current,
               hover: hoverRef.current,
-              target: t ? { x: t.x, y: t.y } : null,
+              target: target ? { x: target.x, y: target.y } : null,
               player: {
                 x: g.dead ? g.x : rx,
                 y: g.dead ? g.y : ry,
@@ -271,16 +360,44 @@ export default function Game() {
                 colors: playerColors(g),
               },
               weather: g.weather,
+              npcs: npcsRef.current ?? [],
+              vehicles: vehiclesRef.current ?? [],
+              cam,
+              vp,
             },
             now
           );
         }
       }
+
+      const mc = minimapRef.current;
+      if (mc && textures) {
+        const mctx = mc.getContext("2d");
+        if (mctx) {
+          drawMinimap(
+            mctx,
+            textures.minimapBase,
+            g.dead ? g.x : rx,
+            g.dead ? g.y : ry,
+            target ? { x: target.x, y: target.y } : null,
+            cam,
+            vp,
+            now
+          );
+        }
+      }
+
+      // контекстная подсказка E (дёшево: раз в 250 мс)
+      if (now - hintClockRef.current > 250) {
+        hintClockRef.current = now;
+        setHint(hintFor(target, g));
+      }
+
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
-  }, [started, staticLayer, grid]);
+  }, [started, textures, grid]);
 
   // клавиатура
   useEffect(() => {
@@ -337,15 +454,16 @@ export default function Game() {
     return () => window.removeEventListener("beforeunload", h);
   }, []);
 
-  /* ---------- ввод мышью ---------- */
+  /* ---------- ввод мышью (через камеру) ---------- */
 
   const tileFromEvent = (e: React.MouseEvent): [number, number] | null => {
     const cv = canvasRef.current;
     if (!cv) return null;
     const r = cv.getBoundingClientRect();
-    const x = Math.floor(((e.clientX - r.left) / r.width) * GRID_W);
-    const y = Math.floor(((e.clientY - r.top) / r.height) * GRID_H);
-    if (x < 0 || y < 0 || x >= GRID_W || y >= GRID_H) return null;
+    const [wx, wy] = screenToWorld(camRef.current, viewportRef.current, e.clientX - r.left, e.clientY - r.top);
+    const x = Math.floor(wx / TILE);
+    const y = Math.floor(wy / TILE);
+    if (x < 0 || y < 0 || x >= grid.length || y >= grid[0].length) return null;
     return [x, y];
   };
 
@@ -388,6 +506,7 @@ export default function Game() {
           t0: performance.now(),
           dur: 100,
         };
+        camRef.current = createCamera((loaded.x + 0.5) * TILE, (loaded.y + 0.5) * TILE);
       } else {
         dispatch({ type: "restart" });
       }
@@ -407,6 +526,7 @@ export default function Game() {
       t0: performance.now(),
       dur: 100,
     };
+    camRef.current = createCamera((START.x + 0.5) * TILE, (START.y + 0.5) * TILE);
     setDialog(null);
     setInvOpen(false);
     setHelpOpen(false);
@@ -420,130 +540,131 @@ export default function Game() {
   const s = state;
   const n = s.char.needs;
   const e = s.char.economy;
-  const hour = hourOf(s);
 
   return (
-    <div className="min-h-screen flex flex-col items-center gap-3 px-3 py-4 select-none">
-      {/* верхняя панель + HUD */}
-      <header className="w-full max-w-[1380px] flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-baseline gap-2">
-          <h1 className="text-lg font-bold tracking-wide text-amber-300">🏚️ Бедный квартал</h1>
-          <span className="hidden md:inline text-xs text-neutral-500">2D survival RPG</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5 text-sm">
-          <Pill icon="❤️" v={n.health} danger={30} />
-          <Pill icon="🍗" v={n.fullness} />
-          <Pill icon="💧" v={n.thirst} />
-          <Pill icon="⚡" v={n.energy} />
-          <span className="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 tabular-nums text-emerald-300">
-            💵 ${e.cash}
-          </span>
-          <span className="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 tabular-nums">
-            {WEATHER_ICONS[s.weather]} День {s.day} · {fmtTime(s.minutes)}
-          </span>
-        </div>
-      </header>
+    <div className="fixed inset-0 overflow-hidden bg-neutral-950 select-none">
+      {/* игровое полотно — весь viewport */}
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 h-full w-full cursor-pointer"
+        onClick={(ev) => {
+          const p = tileFromEvent(ev);
+          if (p) clickAt(p[0], p[1]);
+        }}
+        onMouseMove={(ev) => {
+          hoverRef.current = tileFromEvent(ev);
+        }}
+        onMouseLeave={() => {
+          hoverRef.current = null;
+        }}
+      />
 
-      <div className="w-full max-w-[1380px] flex flex-col xl:flex-row gap-3 items-start">
-        {/* карта */}
-        <div className="relative w-full xl:flex-1">
-          <canvas
-            ref={canvasRef}
-            width={GRID_W * TILE * 2}
-            height={GRID_H * TILE * 2}
-            className="w-full h-auto rounded-lg border border-neutral-800 shadow-2xl cursor-pointer"
-            onClick={(ev) => {
-              const p = tileFromEvent(ev);
-              if (p) clickAt(p[0], p[1]);
-            }}
-            onMouseMove={(ev) => {
-              hoverRef.current = tileFromEvent(ev);
-            }}
-            onMouseLeave={() => {
-              hoverRef.current = null;
-            }}
-          />
-
-          <div className="pointer-events-none absolute bottom-2 left-2 flex max-w-[75%] flex-col gap-1">
-            {s.log.slice(-5).map((l) => (
-              <div
-                key={l.id}
-                className={`rounded bg-black/60 px-2 py-1 text-[11px] leading-tight ${
-                  l.tone === "good"
-                    ? "text-emerald-300"
-                    : l.tone === "bad"
-                      ? "text-red-300"
-                      : "text-neutral-300"
-                }`}
-              >
-                <span className="tabular-nums text-neutral-500">Д{l.day} {l.time}</span> {l.text}
-              </div>
-            ))}
-          </div>
-
-          <div className="absolute bottom-2 right-2 grid w-36 grid-cols-3 gap-1 xl:hidden">
-            <span />
-            <DBtn label="▲" onClick={() => tryStep(0, -1, false, false)} />
-            <span />
-            <DBtn label="◀" onClick={() => tryStep(-1, 0, false, false)} />
-            <DBtn label="E" onClick={pressE} />
-            <DBtn label="▶" onClick={() => tryStep(1, 0, false, false)} />
-            <span />
-            <DBtn label="▼" onClick={() => tryStep(0, 1, false, false)} />
-            <span />
-          </div>
-        </div>
-
-        {/* боковая панель */}
-        <aside className="flex w-full shrink-0 flex-col gap-3 xl:w-80">
-          <div className="grid grid-cols-3 gap-2">
-            <button className={ghostBtn} onClick={() => setProfileOpen((v) => !v)}>
-              👤 Профиль
-            </button>
-            <button className={ghostBtn} onClick={() => setInvOpen((v) => !v)}>
-              🎒 Рюкзак
-            </button>
-            <button className={ghostBtn} onClick={() => setHelpOpen((v) => !v)}>
-              ❓ Помощь
-            </button>
-          </div>
-
-          {dialog ? (
-            <DialogCard
-              dialog={dialog}
-              s={s}
-              dispatch={dispatch}
-              onClose={() => setDialog(null)}
-              onWork={markWorkAnim}
-              onRest={() => {
-                animRef.current.restUntil = performance.now() + 2500;
-              }}
-            />
-          ) : (
-            <div className="rounded-lg border border-dashed border-neutral-800 bg-neutral-900/40 p-3 text-xs leading-relaxed text-neutral-400">
-              Подойди к двери, лавке, мусорному баку или банкомату и нажми{" "}
-              <b className="text-amber-300">E</b>.
-              <br />
-              Клик по земле — идти; клик по зданию — дойти до входа.
-              <br />
-              Shift — бег, B — велосипед, C — профиль, I — рюкзак.
-            </div>
-          )}
-
-          <div className="text-[11px] leading-relaxed text-neutral-500">
-            {s.char.riding
-              ? "🚲 Ты на велосипеде: E не работает, B — сойти."
-              : s.char.statuses.some((x) => x.tone === "bad")
-                ? "⚠️ Активные проблемы: " +
-                  s.char.statuses.filter((x) => x.tone === "bad").map((x) => x.label).join(", ")
-                : "Цель: выжить. Работа → еда → сон. Детали — в профиле (C)."}
-          </div>
-        </aside>
+      {/* верх слева: статус */}
+      <div className="pointer-events-none absolute left-3 top-3 flex flex-wrap items-center gap-1.5">
+        <Pill icon="❤️" v={n.health} danger={30} />
+        <Pill icon="🍗" v={n.fullness} />
+        <Pill icon="💧" v={n.thirst} />
+        <Pill icon="⚡" v={n.energy} />
+        <span className="rounded border border-neutral-700/80 bg-neutral-900/80 px-2 py-1 text-sm tabular-nums text-emerald-300 backdrop-blur-sm">
+          💵 ${e.cash}
+        </span>
+        <span className="rounded border border-neutral-700/80 bg-neutral-900/80 px-2 py-1 text-sm tabular-nums text-neutral-200 backdrop-blur-sm">
+          {WEATHER_ICONS[s.weather]} День {s.day} · {fmtTime(s.minutes)}
+        </span>
       </div>
 
-      <footer className="text-[11px] text-neutral-600">
-        WASD/стрелки — ходьба · Shift — бег · клик — путь · E — действие · B — велосипед · C — профиль · I — рюкзак · Esc — закрыть
-      </footer>
+      {/* верх справа: Профиль / Рюкзак / Телефон */}
+      <div className="absolute right-3 top-3 flex gap-1.5">
+        <button className={hudBtn} onClick={() => setProfileOpen((v) => !v)}>
+          👤 Профиль
+        </button>
+        <button className={hudBtn} onClick={() => setInvOpen((v) => !v)}>
+          🎒 Рюкзак
+        </button>
+        <button className={hudBtn} onClick={phoneAction}>
+          📞 Телефон
+        </button>
+      </div>
+
+      {/* панель диалога (справа, под кнопками) */}
+      {dialog && (
+        <div className="absolute right-3 top-14 max-h-[calc(100vh-180px)] w-[340px] overflow-y-auto">
+          <DialogCard
+            dialog={dialog}
+            s={s}
+            dispatch={dispatch}
+            onClose={() => setDialog(null)}
+            onWork={markWorkAnim}
+            onRest={() => {
+              animRef.current.restUntil = performance.now() + 2500;
+            }}
+          />
+        </div>
+      )}
+
+      {/* тост */}
+      {toast && (
+        <div className="absolute left-1/2 top-16 -translate-x-1/2 rounded-lg border border-neutral-700 bg-neutral-900/90 px-4 py-2 text-sm text-neutral-200 backdrop-blur-sm">
+          {toast}
+        </div>
+      )}
+
+      {/* лог (низ слева) */}
+      <div className="pointer-events-none absolute bottom-3 left-3 flex max-w-[60%] flex-col gap-1">
+        {s.log.slice(-5).map((l) => (
+          <div
+            key={l.id}
+            className={`rounded bg-black/60 px-2 py-1 text-[11px] leading-tight ${
+              l.tone === "good"
+                ? "text-emerald-300"
+                : l.tone === "bad"
+                  ? "text-red-300"
+                  : "text-neutral-300"
+            }`}
+          >
+            <span className="tabular-nums text-neutral-500">
+              Д{l.day} {l.time}
+            </span>{" "}
+            {l.text}
+          </div>
+        ))}
+      </div>
+
+      {/* контекстная подсказка */}
+      {hint && !dialog && !s.dead && (
+        <div className="pointer-events-none absolute bottom-3 left-1/2 -translate-x-1/2 rounded-lg border border-amber-500/40 bg-neutral-900/85 px-4 py-1.5 text-sm font-semibold text-amber-200 backdrop-blur-sm">
+          {hint}
+        </div>
+      )}
+
+      {/* миникарта (низ справа) */}
+      <canvas
+        ref={minimapRef}
+        width={192}
+        height={96}
+        className="absolute bottom-3 right-3 rounded-md border border-neutral-700/70 bg-black/50"
+        style={{ width: 192, height: 96 }}
+      />
+
+      {/* тач-дпад */}
+      <div className="absolute bottom-24 right-3 grid w-28 grid-cols-3 gap-1">
+        <span />
+        <DBtn label="▲" onClick={() => tryStep(0, -1, false, false)} />
+        <span />
+        <DBtn label="◀" onClick={() => tryStep(-1, 0, false, false)} />
+        <DBtn label="E" onClick={pressE} />
+        <DBtn label="▶" onClick={() => tryStep(1, 0, false, false)} />
+        <span />
+        <DBtn label="▼" onClick={() => tryStep(0, 1, false, false)} />
+        <span />
+      </div>
+
+      {/* строка управления */}
+      <div className="pointer-events-none absolute bottom-3 left-1/2 hidden w-[420px] -translate-x-1/2 text-center text-[11px] text-neutral-500 lg:block">
+        {s.char.riding
+          ? "🚲 Велосипед: B — сойти. Ехать — WASD."
+          : "WASD — ходьба · Shift — бег · клик — путь · E — действие · B — велосипед · C — профиль · I — рюкзак"}
+      </div>
 
       {profileOpen && <ProfileModal s={s} onClose={() => setProfileOpen(false)} />}
       {invOpen && (
@@ -563,10 +684,10 @@ function Pill({ icon, v, danger = 20 }: { icon: string; v: number; danger?: numb
   const val = Math.round(v);
   return (
     <span
-      className={`rounded border px-2 py-1 tabular-nums ${
+      className={`rounded border px-2 py-1 text-sm tabular-nums backdrop-blur-sm ${
         val <= danger
-          ? "animate-pulse border-red-800 bg-red-950/60 text-red-300"
-          : "border-neutral-700 bg-neutral-800 text-neutral-200"
+          ? "animate-pulse border-red-800 bg-red-950/70 text-red-300"
+          : "border-neutral-700/80 bg-neutral-900/80 text-neutral-200"
       }`}
     >
       {icon} {val}
@@ -578,7 +699,7 @@ function DBtn({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="h-9 rounded border border-neutral-700 bg-neutral-800/80 text-neutral-300 active:bg-neutral-700"
+      className="h-9 rounded border border-neutral-700/80 bg-neutral-900/80 text-neutral-300 backdrop-blur-sm active:bg-neutral-700"
     >
       {label}
     </button>
@@ -817,6 +938,11 @@ function BuildingPanel({
       <p className="text-xs text-neutral-400">{b.desc}</p>
       {b.kind === "shop" && <ShopPanel s={s} dispatch={dispatch} />}
       {b.kind === "shelter" && <ShelterPanel s={s} dispatch={dispatch} />}
+      {b.kind === "police" && (
+        <p className="text-xs italic text-neutral-500">
+          Пост полиции. Сюда приносят краденое и жалуются на шум.
+        </p>
+      )}
       {b.jobs.map((j) => (
         <JobCard key={j} jobId={j} s={s} dispatch={dispatch} onWork={onWork} />
       ))}
@@ -840,7 +966,7 @@ function BuildingPanel({
         >
           💻 Посидеть за ПК — ${PC_COST} (1 час, опыт «Компьютеры»)
         </button>
-      )}
+        )}
       {b.id === "office" &&
         (c.social.hasDocuments ? (
           <p className="text-xs text-neutral-500">Документы оформлены.</p>
@@ -876,7 +1002,7 @@ function DialogCard({
   onRest: () => void;
 }) {
   return (
-    <div className={`${cardCls} max-h-[60vh] overflow-y-auto flex flex-col gap-2`}>
+    <div className={`${cardCls} flex flex-col gap-2`}>
       {dialog.kind === "building" && (
         <BuildingPanel b={dialog.b} s={s} dispatch={dispatch} onClose={onClose} onWork={onWork} />
       )}
@@ -1291,9 +1417,7 @@ function IntroOverlay({
           )}
           <button
             onClick={() => onStart(false)}
-            className={`flex-1 rounded-lg bg-amber-500 px-4 py-2.5 font-bold text-neutral-950 hover:bg-amber-400 ${
-              saveExists ? "" : ""
-            }`}
+            className="flex-1 rounded-lg bg-amber-500 px-4 py-2.5 font-bold text-neutral-950 hover:bg-amber-400"
           >
             Новая игра
           </button>

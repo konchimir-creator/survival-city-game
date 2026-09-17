@@ -1,7 +1,7 @@
 {
   "file": "character-sheet.png",
-  "frameWidth": 64,
-  "frameHeight": 96,
+  "frameWidth": 128,
+  "frameHeight": 192,
   "columns": 9,
   "rows": 4,
   "directions": [
@@ -21,9 +21,14 @@
     "run3",
     "run4"
   ],
-  "sheetWidth": 576,
-  "sheetHeight": 384,
+  "sheetWidth": 1152,
+  "sheetHeight": 768,
   "transparent": true,
-  "groundLineY": 86,
+  "anchorX": 64,
+  "groundLineY": 172,
+  "npcFile": "npcs.png",
+  "npcPalettes": 4,
+  "npcRows": 16,
+  "npcRowFor": "palette*4 + directionIndex (down=0, up=1, left=2, right=3)",
   "notes": "Каждый ряд — направление; колонка 0 — idle, 1-4 — walk, 5-8 — run."
 }

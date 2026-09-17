@@ -1,9 +1,14 @@
-// Генератор функционального спрайт-листа персонажа для Survival City.
-// Чистый Node (zlib встроены) — без зависимостей.
-// Запуск: node tools/sprites/render-sheet.js
+// Генератор функциональных спрайт-листов персонажа для Survival City.
+// Чистый Node (zlib встроен) — без зависимостей, детерминированный.
 //
-// Лист: 64x96 на кадр, 9 колонок (idle, walk1..4, run1..4) x 4 ряда (down, up, left, right).
-// Прозрачный фон, без текста/подписей/декора. Тень строго внутри кадра.
+// Запуск:
+//   node tools/sprites/render-sheet.js            # все листы
+//   node tools/sprites/render-sheet.js --debug 7  # один кадр hero-листа крупно
+//
+// Формат: кадр 128x192, линия земли y=172, центр x=64.
+// hero:  9 колонок (idle, walk1..4, run1..4) x 4 ряда (down, up, left, right)
+// npc:   9 колонок x 16 рядов (4 палитры x 4 направления; ряд = palette*4 + dir)
+// Прозрачный фон, тень внутри кадра, без текста.
 
 "use strict";
 const zlib = require("zlib");
@@ -41,12 +46,12 @@ function encodePNG(w, h, rgba) {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(w, 0);
   ihdr.writeUInt32BE(h, 4);
-  ihdr[8] = 8; // глубина
-  ihdr[9] = 6; // RGBA
+  ihdr[8] = 8;
+  ihdr[9] = 6;
   const raw = Buffer.alloc((w * 4 + 1) * h);
   for (let y = 0; y < h; y++) {
     const rowStart = y * (w * 4 + 1);
-    raw[rowStart] = 0; // filter none
+    raw[rowStart] = 0;
     for (let x = 0; x < w; x++) {
       const s = (y * w + x) * 4;
       const d = rowStart + 1 + x * 4;
@@ -87,9 +92,9 @@ class Layer {
   }
 }
 
-/* ================= painter (логические координаты, SS-суперсэмплинг) ================= */
+/* ================= painter (логические координаты кадра 128x192) ================= */
 
-const SS = 3;
+const SS = 2;
 
 function makePainter(w, h) {
   const layer = new Layer(w * SS, h * SS);
@@ -168,6 +173,9 @@ function makePainter(w, h) {
         for (let x = x0; x <= x1; x++) layer.blend(x, y, col[0], col[1], col[2], col[3]);
       }
     },
+    line(x1, y1, x2, y2, r, col) {
+      p.capsule(x1, y1, x2, y2, r, col);
+    },
     toRGBA() {
       return layer.toRGBA();
     },
@@ -175,7 +183,6 @@ function makePainter(w, h) {
   return p;
 }
 
-// downsample с суперсэмплинга в целевой буфер (вставка кадра)
 function blitFrame(target, tw, th, src, sw, sh, dx, dy, scale) {
   scale = scale || SS;
   const srcW = sw * scale;
@@ -209,239 +216,320 @@ function blitFrame(target, tw, th, src, sw, sh, dx, dy, scale) {
   }
 }
 
-/* ================= палитра (приглушённая городская) ================= */
+/* ================= палитры ================= */
 
-const C = {
-  skin: [216, 178, 141, 255],
-  skinShade: [191, 152, 117, 255],
-  hair: [72, 57, 44, 255],
-  hairDark: [56, 44, 34, 255],
-  hood: [64, 68, 76, 255],
-  hoodDark: [48, 51, 58, 255],
-  hoodArm: [55, 58, 66, 255],
-  hoodLight: [82, 87, 97, 255],
-  hoodFaded: [90, 95, 105, 110],
-  jeans: [93, 111, 136, 255],
-  jeansFar: [74, 89, 110, 255],
-  jeansLight: [122, 140, 164, 90],
-  shoe: [178, 181, 187, 255],
-  shoeLight: [204, 206, 211, 140],
-  sole: [70, 73, 79, 255],
-  pack: [108, 89, 71, 255],
-  packDark: [82, 67, 54, 255],
-  packWorn: [58, 48, 40, 90],
-  strap: [60, 55, 49, 255],
-  string: [172, 168, 158, 255],
-  eye: [42, 37, 31, 255],
-  mouth: [140, 105, 90, 110],
-  outline: [28, 30, 36, 160],
-  shadow: [10, 12, 16, 58],
-};
+function pal(over) {
+  return Object.assign(
+    {
+      skin: [219, 183, 146, 255],
+      skinShade: [190, 152, 116, 255],
+      hair: [74, 58, 45, 255],
+      hairDark: [56, 44, 34, 255],
+      hood: [62, 66, 75, 255],
+      hoodDark: [45, 48, 56, 255],
+      hoodSleeve: [54, 57, 66, 255],
+      hoodFaded: [92, 97, 108, 110],
+      jeans: [92, 110, 135, 255],
+      jeansFar: [72, 88, 109, 255],
+      jeansLight: [120, 138, 162, 90],
+      shoe: [181, 184, 190, 255],
+      shoeLight: [206, 208, 213, 150],
+      sole: [68, 71, 77, 255],
+      lace: [118, 122, 128, 255],
+      pack: [110, 91, 72, 255],
+      packDark: [82, 67, 54, 255],
+      packWorn: [56, 46, 38, 100],
+      strap: [58, 53, 47, 255],
+      string: [175, 171, 161, 255],
+      eye: [40, 35, 29, 255],
+      mouth: [138, 103, 88, 120],
+      outline: [26, 28, 34, 170],
+      shadow: [8, 10, 14, 55],
+      hat: null,
+    },
+    over
+  );
+}
 
-const OUT = C.outline;
+const HERO = pal({});
 
-/* ================= позы ================= */
+const NPC_PALETTES = [
+  pal({
+    hood: [88, 94, 72, 255],
+    hoodDark: [66, 70, 54, 255],
+    hoodSleeve: [78, 83, 64, 255],
+    skin: [214, 178, 140, 255],
+    hair: [60, 50, 40, 255],
+    pack: [96, 82, 66, 255],
+  }),
+  pal({
+    hood: [104, 84, 64, 255],
+    hoodDark: [78, 62, 47, 255],
+    hoodSleeve: [93, 75, 57, 255],
+    skin: [226, 196, 166, 255],
+    hair: [90, 70, 50, 255],
+    hat: [70, 74, 84, 255],
+  }),
+  pal({
+    hood: [108, 110, 116, 255],
+    hoodDark: [82, 84, 90, 255],
+    hoodSleeve: [96, 98, 104, 255],
+    skin: [205, 168, 132, 255],
+    hair: [50, 46, 42, 255],
+    pack: [88, 84, 78, 255],
+  }),
+  pal({
+    hood: [44, 52, 72, 255],
+    hoodDark: [32, 38, 54, 255],
+    hoodSleeve: [39, 46, 64, 255],
+    skin: [219, 183, 146, 255],
+    hair: [60, 50, 40, 255],
+    hat: [36, 42, 58, 255],
+  }),
+];
+
+/* ================= позы (координаты 128x192) ================= */
 
 function poseParams(anim, frame) {
   if (anim === "idle")
     return { legL: 0, legR: 0, liftL: 0, liftR: 0, bob: 0, armL: 0, armR: 0, run: false };
-  const A = anim === "walk" ? 6 : 9.5;
-  const LF = anim === "walk" ? 2 : 4;
-  const LB = anim === "walk" ? 3 : 6;
+  const A = anim === "walk" ? 12 : 19;
+  const LF = anim === "walk" ? 5 : 8;
+  const LB = anim === "walk" ? 7 : 12;
   const armA = A * 0.42;
   const frames = [
     { legL: A, legR: -A, liftL: LF, liftR: LB, bob: 0, armL: -armA, armR: armA, run: anim === "run" },
-    { legL: 0, legR: 0, liftL: 0, liftR: 0, bob: anim === "walk" ? 1 : 2, armL: 0, armR: 0, run: anim === "run" },
+    { legL: 0, legR: 0, liftL: 0, liftR: 0, bob: anim === "walk" ? 2 : 4, armL: 0, armR: 0, run: anim === "run" },
     { legL: -A, legR: A, liftL: LB, liftR: LF, bob: 0, armL: armA, armR: -armA, run: anim === "run" },
-    { legL: 0, legR: 0, liftL: 0, liftR: 0, bob: anim === "walk" ? -1 : 1, armL: 0, armR: 0, run: anim === "run" },
+    { legL: 0, legR: 0, liftL: 0, liftR: 0, bob: anim === "walk" ? -2 : 2, armL: 0, armR: 0, run: anim === "run" },
   ];
   return frames[frame];
 }
 
 /* ================= персонаж ================= */
+// Кадр 128x192: центр x=64, линия земли y=172, рост ~142px (человеческие
+// пропорции: голова ~1/5 роста), корпус 80..126, ноги 124..162, кроссовки до 172.
 
-// Кадр: 64x96, центр x=32, линия земли y=86, верх головы ~y=12.
-function drawCharacter(p, dir, anim, frame) {
+function drawCharacter(p, dir, anim, frame, C) {
   const P = poseParams(anim, frame);
-  const uy = P.bob + (anim === "run" ? (dir === "down" ? 1.5 : dir === "up" ? -1.5 : 0) : 0);
-  const ux = anim === "run" ? (dir === "left" ? -2 : dir === "right" ? 2 : 0) : 0;
-  const cx = 32 + ux;
+  const uy = P.bob + (anim === "run" ? (dir === "down" ? 3 : dir === "up" ? -3 : 0) : 0);
+  const ux = anim === "run" ? (dir === "left" ? -4 : dir === "right" ? 4 : 0) : 0;
+  const cx = 64 + ux;
   const d = dir === "left" ? -1 : dir === "right" ? 1 : 0;
+  const OUT = C.outline;
 
   // тень (всегда внутри кадра)
-  const shr = P.run ? 11 : 13;
-  p.ellipse(32, 87.5, shr, 3, C.shadow);
+  p.ellipse(64, 176, P.run ? 22 : 26, 6, C.shadow);
 
-  const hipY = 58 + P.bob * 0.35;
-  const footL = { x: 27.5 + P.legL, y: 84 - P.liftL };
-  const footR = { x: 36.5 + P.legR, y: 84 - P.liftR };
+  const hipY = 124 + P.bob * 0.4;
+  const footL = { x: 55 + P.legL, y: 168 - P.liftL };
+  const footR = { x: 73 + P.legR, y: 168 - P.liftR };
 
   const sneaker = (f, facing) => {
-    const x = f.x - 5.75;
-    const y = f.y - 5;
-    p.rrect(x - 0.7, y - 0.7, 13, 7, 3.2, OUT);
-    p.rrect(x, y, 11.5, 6, 2.8, C.shoe);
-    p.ellipse(f.x + (facing || 0) * 3.5, f.y - 1.2, 3.4, 2, C.shoeLight);
-    p.rrect(x - 0.2, f.y + 0.4, 11.9, 2.1, 1, C.sole);
+    const x = f.x - 11.5;
+    const y = f.y - 10;
+    p.rrect(x - 1.4, y - 1.4, 25.8, 15.8, 7, OUT);
+    p.rrect(x, y, 23, 13, 6, C.shoe);
+    // мысок
+    p.ellipse(f.x + (facing || 0) * 7, f.y - 3.5, 7, 4, C.shoeLight);
+    // шнурки
+    p.capsule(f.x - 3 + (facing || 0) * 2, f.y - 7.5, f.x + 4 + (facing || 0) * 2, f.y - 7.5, 0.9, C.lace);
+    p.capsule(f.x - 3 + (facing || 0) * 2, f.y - 5, f.x + 4 + (facing || 0) * 2, f.y - 5, 0.9, C.lace);
+    // подошва
+    p.rrect(x - 0.8, f.y + 1.4, 24.6, 4.2, 2, C.sole);
   };
 
   const leg = (hx, f, col) => {
-    const kx = (hx + f.x) / 2 + 1.2;
-    const ky = (hipY + f.y) / 2 - P.liftL * 0.1;
-    p.capsule(hx, hipY, kx, ky, 4.4, OUT);
-    p.capsule(f.x, f.y, kx, ky, 4.4, OUT);
-    p.capsule(hx, hipY, kx, ky, 3.8, col);
-    p.capsule(f.x, f.y, kx, ky, 3.8, col);
+    const kx = (hx + f.x) / 2 + 2.4;
+    const ky = (hipY + f.y) / 2 - P.liftL * 0.12;
+    p.capsule(hx, hipY, kx, ky, 8.8, OUT);
+    p.capsule(f.x, f.y, kx, ky, 8.8, OUT);
+    p.capsule(hx, hipY, kx, ky, 7.4, col);
+    p.capsule(f.x, f.y, kx, ky, 7.4, col);
+    // боковой шов
+    p.capsule(hx + 1.5, hipY + 4, f.x + 1, f.y - 8, 0.8, C.jeansFar);
     // колено: выцветшее пятно
-    p.ellipse(kx, ky, 2.3, 3, C.jeansLight);
-    // манжета джинсов
-    p.rrect(f.x - 3.6, f.y - 4.5, 7.2, 2.6, 1.2, C.jeansFar);
+    p.ellipse(kx, ky, 4.6, 6, C.jeansLight);
+    // манжета
+    p.rrect(f.x - 7.2, f.y - 9, 14.4, 5, 2.4, C.jeansFar);
   };
 
   const head = (withFace) => {
-    const hy = 19.5 + uy;
+    const hy = 55 + uy;
     const hx = cx;
-    // волосы + лицо
-    p.fillCircle(hx, hy - 1.4, 7.5, OUT);
-    p.fillCircle(hx, hy - 1.4, 6.9, C.hair);
-    if (withFace && (dir === "down" || dir === "left" || dir === "right")) {
-      const fx = dir === "down" ? hx : hx + d * 1.8;
-      p.fillCircle(fx, hy + 1.3, 5.7, C.skin);
-      if (dir === "down") {
-        p.fillCircle(fx - 2.4, hy + 1.7, 1.05, C.eye);
-        p.fillCircle(fx + 2.4, hy + 1.7, 1.05, C.eye);
-        p.capsule(fx - 1.8, hy + 4.9, fx + 1.8, hy + 4.9, 0.55, C.mouth);
-      } else {
-        p.fillCircle(fx + d * 3.2, hy + 2, 1.05, C.eye);
-        p.fillCircle(fx - d * 0.8, hy + 2.4, 1.5, C.skinShade); // ухо
+    // волосы
+    p.fillCircle(hx, hy - 3, 15.6, OUT);
+    p.fillCircle(hx, hy - 3, 14.2, C.hair);
+    // головной убор (у NPC)
+    if (C.hat) {
+      p.fillCircle(hx, hy - 4.4, 14.6, C.hat);
+      p.rrect(hx - 14.4, hy - 6.5, 28.8, 5.5, 2.6, C.hat);
+      if (dir === "left" || dir === "right") {
+        p.rrect(hx - 14.4 + (d === 1 ? 10 : 0), hy - 5.5, 18, 4.5, 2, C.hat); // козырёк вперёд
       }
     }
-    // растрёпанные пряди (лежат на макушке, не «рога»)
-    p.capsule(hx - 4.5, hy - 5.6, hx - 6.8, hy - 7.8, 1.6, C.hairDark);
-    p.capsule(hx - 0.5, hy - 6.8, hx + 0.8, hy - 9.8, 1.6, C.hairDark);
-    p.capsule(hx + 4.5, hy - 5.6, hx + 7, hy - 7.4, 1.6, C.hairDark);
+    if (withFace && (dir === "down" || dir === "left" || dir === "right")) {
+      const fx = dir === "down" ? hx : hx + d * 3.4;
+      p.fillCircle(fx, hy + 2.6, 12.2, C.skin);
+      if (dir === "down") {
+        // брови — тонкие, спокойные
+        p.capsule(fx - 6.4, hy - 0.4, fx - 3.4, hy - 0.7, 0.7, C.hairDark);
+        p.capsule(fx + 3.4, hy - 0.7, fx + 6.4, hy - 0.4, 0.7, C.hairDark);
+        p.fillCircle(fx - 4.8, hy + 3.4, 2.1, C.eye);
+        p.fillCircle(fx + 4.8, hy + 3.4, 2.1, C.eye);
+        p.capsule(fx - 3.2, hy + 9.8, fx + 3.2, hy + 9.8, 1.1, C.mouth);
+      } else {
+        p.capsule(fx + d * 4.6, hy - 0.2, fx + d * 7.2, hy - 0.5, 0.7, C.hairDark); // бровь
+        p.fillCircle(fx + d * 6.4, hy + 4.2, 2.1, C.eye);
+        p.fillCircle(fx - d * 1.6, hy + 4.8, 3.2, C.skinShade); // ухо
+      }
+    }
+    // растрёпанные пряди — лежат на макушке, направлены в стороны
+    p.capsule(hx - 8.5, hy - 11.2, hx - 14.5, hy - 14.2, 2.4, C.hairDark);
+    p.capsule(hx - 1, hy - 13.6, hx - 3.4, hy - 17.4, 2.4, C.hairDark);
+    p.capsule(hx + 9.5, hy - 11.2, hx + 15.2, hy - 14, 2.4, C.hairDark);
+    p.capsule(hx + 14, hy - 6, hx + 18.2, hy - 8.6, 2, C.hairDark);
     if (dir === "up") {
-      p.fillCircle(hx, hy - 0.4, 6.6, C.hair); // затылок
+      p.fillCircle(hx, hy - 1.6, 13.6, C.hair); // затылок
     }
     if (dir === "left" || dir === "right") {
-      p.fillCircle(hx - d * 3.4, hy - 2.4, 4.8, C.hair); // затылок сзади
+      p.fillCircle(hx - d * 7, hy - 4.6, 10, C.hair); // затылок сзади
     }
   };
 
   const hoodDown = () => {
-    // капюшон, собранный на шее (вид спереди)
-    p.rrect(cx - 7, 25 + uy, 14, 7.5, 3.5, OUT);
-    p.rrect(cx - 6.4, 25.6 + uy, 12.8, 6.4, 3, C.hoodDark);
+    // капюшон, собранный на шее (спереди)
+    p.rrect(cx - 14, 50 + uy, 28, 15, 7, OUT);
+    p.rrect(cx - 12.8, 51.2 + uy, 25.6, 12.8, 6, C.hoodDark);
+    // складки
+    p.capsule(cx - 6, 56 + uy, cx + 6, 56.8 + uy, 1.2, C.hood);
   };
 
   const torso = () => {
-    // туловище (худи)
-    p.rrect(cx - 10.9, 29.5 + uy, 21.8, 31, 6, OUT);
-    p.rrect(cx - 10.3, 30.1 + uy, 20.6, 29.8, 5.5, C.hood);
-    // выцветшие плечи
-    p.ellipse(cx - 6.5, 33.5 + uy, 3.8, 2.8, C.hoodFaded);
-    p.ellipse(cx + 6.5, 33.5 + uy, 3.8, 2.8, C.hoodFaded);
+    // корпус худи
+    p.rrect(cx - 21.8, 79 + uy, 43.6, 46, 12, OUT);
+    p.rrect(cx - 20.6, 80.2 + uy, 41.2, 44, 11, C.hood);
+    // выцветшие плечи (мягкий свет)
+    p.ellipse(cx - 13, 86 + uy, 7.6, 5.2, C.hoodFaded);
+    p.ellipse(cx + 13, 86 + uy, 7.6, 5.2, C.hoodFaded);
     // потёртости
-    p.ellipse(cx - 8, 44 + uy, 2.6, 2, C.packWorn);
-    p.ellipse(cx + 8, 50 + uy, 2.2, 1.8, C.packWorn);
-    // манжета низа
-    p.rrect(cx - 10.3, 57 + uy, 20.6, 4, 2.2, C.hoodDark);
+    p.ellipse(cx - 16, 96 + uy, 5.2, 4, C.packWorn);
+    p.ellipse(cx + 16, 108 + uy, 4.4, 3.6, C.packWorn);
+    // мягкая тень по правому краю
+    p.ellipse(cx + 17, 102 + uy, 4, 14, [22, 24, 30, 38]);
+    // мягкий свет по левому верху
+    p.ellipse(cx - 14, 90 + uy, 6, 9, [235, 238, 244, 26]);
+    // молния
+    p.capsule(cx, 84 + uy, cx, 118 + uy, 1.2, [40, 42, 48, 190]);
+    p.fillCircle(cx, 86 + uy, 1.6, C.string);
+    // манжета низа (рибана)
+    p.rrect(cx - 20.6, 118 + uy, 41.2, 8, 4.5, C.hoodDark);
+    p.capsule(cx - 16, 122 + uy, cx + 16, 122 + uy, 0.8, C.hoodDark);
   };
 
   const torsoDetails = () => {
-    // карман-кенгуру (приглушённый, широкий, низкий)
-    p.rrect(cx - 5.5, 50 + uy, 11, 6.8, 2.4, C.hoodDark);
-    p.capsule(cx - 4.5, 50.4 + uy, cx + 4.5, 50.4 + uy, 0.5, C.hood); // край кармана
+    // карман-кенгуру
+    p.rrect(cx - 11, 106 + uy, 22, 14, 5, C.hoodDark);
+    p.capsule(cx - 9, 106.6 + uy, cx + 9, 106.6 + uy, 1, C.hood); // край кармана
     // шнурки
-    p.capsule(cx - 2.4, 31 + uy, cx - 2.4, 37 + uy, 0.75, C.string);
-    p.capsule(cx + 2.4, 31 + uy, cx + 2.4, 37 + uy, 0.75, C.string);
-    // ремешки рюкзака на плечах
-    p.capsule(cx - 6.2, 32 + uy, cx - 6.2, 46 + uy, 1.6, OUT);
-    p.capsule(cx + 6.2, 32 + uy, cx + 6.2, 46 + uy, 1.6, OUT);
-    p.capsule(cx - 6.2, 32 + uy, cx - 6.2, 46 + uy, 1.2, C.strap);
-    p.capsule(cx + 6.2, 32 + uy, cx + 6.2, 46 + uy, 1.2, C.strap);
+    p.capsule(cx - 5, 83 + uy, cx - 5, 98 + uy, 1.5, C.string);
+    p.capsule(cx + 5, 83 + uy, cx + 5, 98 + uy, 1.5, C.string);
+    p.fillCircle(cx - 5, 99 + uy, 1.3, C.string);
+    p.fillCircle(cx + 5, 99 + uy, 1.3, C.string);
+    // ремешки рюкзака
+    p.capsule(cx - 12.4, 83 + uy, cx - 12.4, 104 + uy, 3.2, OUT);
+    p.capsule(cx + 12.4, 83 + uy, cx + 12.4, 104 + uy, 3.2, OUT);
+    p.capsule(cx - 12.4, 83 + uy, cx - 12.4, 104 + uy, 2.4, C.strap);
+    p.capsule(cx + 12.4, 83 + uy, cx + 12.4, 104 + uy, 2.4, C.strap);
   };
 
   const arm = (sx, hx, hy, col) => {
-    p.capsule(sx, 33.5 + uy, hx, hy, 3.8, OUT);
-    p.capsule(sx, 33.5 + uy, hx, hy, 3.2, col);
-    p.fillCircle(hx, hy, 2.4, OUT);
-    p.fillCircle(hx, hy, 1.9, C.skin); // кисть
+    p.capsule(sx, 82 + uy, hx, hy, 7.2, OUT);
+    p.capsule(sx, 82 + uy, hx, hy, 5.8, col);
+    // манжета рукава
+    p.capsule(hx - (hx - sx) * 0.06, hy - (hy - (82 + uy)) * 0.1, hx, hy, 5, C.hoodDark);
+    p.fillCircle(hx, hy, 4.6, OUT);
+    p.fillCircle(hx, hy, 3.6, C.skin); // кисть
   };
 
   const backpackUp = () => {
-    // старый небольшой рюкзак (вид сзади)
-    const bx = cx - 9.5;
-    const by = 33 + uy;
-    p.rrect(bx - 0.7, by - 0.7, 20.4, 22.4, 5, OUT);
-    p.rrect(bx, by, 19, 21, 4.5, C.pack);
-    p.rrect(bx, by, 19, 9.5, 4.5, C.packDark); // клапан
-    p.rrect(bx + 2, by + 14.5, 6.5, 6, 2, C.packDark); // карман
-    p.rrect(bx + 11.5, by + 13.5, 6, 7, 2, C.packDark);
-    p.capsule(bx + 4.5, by + 9.5, bx + 14.5, by + 9.5, 1, C.strap); // пояс клапана
-    p.ellipse(bx + 4, by + 18, 2.4, 1.8, C.packWorn); // потёртость
+    // рюкзак (вид сзади)
+    const bx = cx - 19;
+    const by = 66 + uy;
+    p.rrect(bx - 1.4, by - 1.4, 40.8, 44.8, 9, OUT);
+    p.rrect(bx, by, 38, 42, 8, C.pack);
+    p.rrect(bx, by, 38, 19, 8, C.packDark); // клапан
+    p.rrect(bx + 4, by + 29, 13, 12, 4, C.packDark); // карманы
+    p.rrect(bx + 22, by + 27, 12, 14, 4, C.packDark);
+    p.capsule(bx + 9, by + 19, bx + 29, by + 19, 2, C.strap); // пояс клапана
+    p.fillCircle(bx + 12, by + 19, 1.6, C.string); // пряжка
+    p.fillCircle(bx + 26, by + 19, 1.6, C.string);
+    p.ellipse(bx + 8, by + 35, 4.8, 3.6, C.packWorn); // потёртость
     // ремешки поверх плеч
-    p.capsule(cx - 6.2, 31.5 + uy, cx - 6.2, 38 + uy, 1.6, OUT);
-    p.capsule(cx + 6.2, 31.5 + uy, cx + 6.2, 38 + uy, 1.6, OUT);
-    p.capsule(cx - 6.2, 31.5 + uy, cx - 6.2, 38 + uy, 1.2, C.strap);
-    p.capsule(cx + 6.2, 31.5 + uy, cx + 6.2, 38 + uy, 1.2, C.strap);
+    p.capsule(cx - 12.4, 63 + uy, cx - 12.4, 79 + uy, 3.2, OUT);
+    p.capsule(cx + 12.4, 63 + uy, cx + 12.4, 79 + uy, 3.2, OUT);
+    p.capsule(cx - 12.4, 63 + uy, cx - 12.4, 79 + uy, 2.4, C.strap);
+    p.capsule(cx + 12.4, 63 + uy, cx + 12.4, 79 + uy, 2.4, C.strap);
   };
 
   const hoodUp = () => {
     // капюшон на спине (вид сзади)
-    p.rrect(cx - 7.6, 23.5 + uy, 15.2, 12, 5.5, OUT);
-    p.rrect(cx - 7, 24.1 + uy, 14, 10.8, 5, C.hoodDark);
-    p.capsule(cx - 3.5, 28.5 + uy, cx + 3.5, 29 + uy, 0.85, C.hood); // складка
+    p.rrect(cx - 15.2, 47 + uy, 30.4, 24, 11, OUT);
+    p.rrect(cx - 14, 48.2 + uy, 28, 21.6, 10, C.hoodDark);
+    p.capsule(cx - 7, 57 + uy, cx + 7, 58 + uy, 1.6, C.hood); // складка
   };
 
   const backpackSide = () => {
     // вид сбоку: рюкзак на «задней» стороне, прижат к спине
-    const bx = cx - d * 10.5;
-    const by = 32.5 + uy;
-    p.rrect(bx - 0.7, by - 0.7, 10.4, 21.4, 4.5, OUT);
-    p.rrect(bx, by, 9, 20, 4, C.pack);
-    p.rrect(bx, by, 9, 8, 4, C.packDark);
-    p.capsule(bx + 1.5, by + 8, bx + 7.5, by + 8, 0.8, C.strap); // пояс клапана
-    p.ellipse(bx + 3.5, by + 14.5, 1.8, 1.5, C.packWorn);
+    const bx = cx - d * 19;
+    const by = 68 + uy;
+    p.rrect(bx - 1.4, by - 1.4, 20.8, 42.8, 8, OUT);
+    p.rrect(bx, by, 18, 40, 7, C.pack);
+    p.rrect(bx, by, 18, 15, 7, C.packDark);
+    p.capsule(bx + 3, by + 15, bx + 15, by + 15, 1.6, C.strap);
+    p.ellipse(bx + 7, by + 28, 3.6, 3, C.packWorn);
     // ремень через плечо
-    p.capsule(cx - d * 3, 31.5 + uy, cx + d * 1.5, 40 + uy, 1.3, C.strap);
+    p.capsule(cx - d * 6, 66 + uy, cx + d * 3, 84 + uy, 2.6, C.strap);
   };
 
   const hoodSide = () => {
-    p.rrect(cx - d * 8 - 4.5, 25 + uy, 9, 7.5, 3.5, OUT);
-    p.rrect(cx - d * 8 - 3.9, 25.6 + uy, 7.8, 6.3, 3, C.hoodDark);
+    // капюшон сзади головы — только слегка выглядывает
+    p.rrect(cx - d * 14 - 8, 50 + uy, 16, 14, 6.5, OUT);
+    p.rrect(cx - d * 14 - 6.8, 51.2 + uy, 13.6, 11.8, 5.5, C.hoodDark);
   };
+
+  const handY = 118 + uy * 0.9 - (P.run ? 8 : 0);
 
   if (dir === "down") {
     hoodDown();
-    leg(28.5 + ux * 0.3, footL, C.jeans);
-    leg(35.5 + ux * 0.3, footR, C.jeans);
+    leg(57 + ux * 0.3, footL, C.jeans);
+    leg(71 + ux * 0.3, footR, C.jeans);
     sneaker(footL, 0);
     sneaker(footR, 0);
     torso();
     torsoDetails();
-    arm(cx - 8.8, cx - 10.8 + P.armL, 55 + uy * 0.9 - (P.run ? 4 : 0), C.hoodArm);
-    arm(cx + 8.8, cx + 10.8 + P.armR, 55 + uy * 0.9 - (P.run ? 4 : 0), C.hoodArm);
+    arm(cx - 17.6, cx - 21.6 + P.armL, handY, C.hoodSleeve);
+    arm(cx + 17.6, cx + 21.6 + P.armR, handY, C.hoodSleeve);
     head(true);
   } else if (dir === "up") {
-    leg(28.5 + ux * 0.3, footL, C.jeans);
-    leg(35.5 + ux * 0.3, footR, C.jeans);
+    leg(57 + ux * 0.3, footL, C.jeans);
+    leg(71 + ux * 0.3, footR, C.jeans);
     sneaker(footL, 0);
     sneaker(footR, 0);
     torso();
     backpackUp();
     hoodUp();
-    arm(cx - 8.8, cx - 10.8 + P.armL, 55 + uy * 0.9 - (P.run ? 4 : 0), C.hoodArm);
-    arm(cx + 8.8, cx + 10.8 + P.armR, 55 + uy * 0.9 - (P.run ? 4 : 0), C.hoodArm);
+    arm(cx - 17.6, cx - 21.6 + P.armL, handY, C.hoodSleeve);
+    arm(cx + 17.6, cx + 21.6 + P.armR, handY, C.hoodSleeve);
     head(false);
   } else {
-    // боковой вид (left / right)
+    // боковой вид
     const nearLeg = d === 1 ? footL : footR;
     const farLeg = d === 1 ? footR : footL;
-    const nearHip = d === 1 ? 28.5 : 35.5;
-    const farHip = d === 1 ? 35.5 : 28.5;
+    const nearHip = d === 1 ? 57 : 71;
+    const farHip = d === 1 ? 71 : 57;
     // дальняя рука (за телом)
-    arm(cx - d * 1.5, cx - d * 4.5 + P.armR * 0.8, 54 + uy * 0.9, C.hoodDark);
+    arm(cx - d * 3, cx - d * 9 + P.armR * 0.8, handY, C.hoodDark);
     leg(farHip + ux * 0.3, farLeg, C.jeansFar);
     sneaker(farLeg, d);
     torso();
@@ -449,114 +537,145 @@ function drawCharacter(p, dir, anim, frame) {
     hoodSide();
     leg(nearHip + ux * 0.3, nearLeg, C.jeans);
     sneaker(nearLeg, d);
-    arm(cx - d * 1.5, cx - d * 4.5 + P.armL * 0.9, 54 + uy * 0.9 - (P.run ? 4 : 0), C.hoodArm);
+    arm(cx - d * 3, cx - d * 9 + P.armL * 0.9, handY, C.hoodSleeve);
     head(true);
   }
 }
 
-/* ================= сборка листа ================= */
+/* ================= сборка листов ================= */
 
-const FW = 64;
-const FH = 96;
+const FW = 128;
+const FH = 192;
 const COLS = 9; // idle, walk1..4, run1..4
-const ROWS = 4;
+const HERO_ROWS = 4;
+const NPC_PALETTES_COUNT = NPC_PALETTES.length;
+const NPC_ROWS = NPC_PALETTES_COUNT * HERO_ROWS;
 const DIRS = ["down", "up", "left", "right"];
 
-// Отладка: `node render-sheet.js --debug <idx>` — один кадр, увеличенный в 8 раз
-const dbgIdx = process.argv.includes("--debug")
-  ? Math.min(35, Math.max(0, Number(process.argv[process.argv.indexOf("--debug") + 1]) || 0))
-  : -1;
-
-const sheet = new Layer(COLS * FW, ROWS * FH);
-
-for (let r = 0; r < ROWS; r++) {
-  for (let c = 0; c < COLS; c++) {
-    const idx = r * COLS + c;
-    const anim = c === 0 ? "idle" : c <= 4 ? "walk" : "run";
-    const frame = c === 0 ? 0 : c <= 4 ? c - 1 : c - 5;
-    const p = makePainter(FW, FH);
-    drawCharacter(p, DIRS[r], anim, frame);
-    if (dbgIdx === idx) {
-      // один кадр на светлом фоне, увеличенный в 4 раза (256x384) — для осмотра
-      const S = 4;
-      const big = new Layer(FW * S, FH * S);
-      const rgba = p.toRGBA(); // буфер SS-масштаба: (FW*SS) x (FH*SS)
-      const ssW = FW * SS;
-      for (let y = 0; y < FH * S; y++) {
-        for (let x = 0; x < FW * S; x++) {
-          const t = (y * FW * S + x) * 4;
-          const light = ((x >> 4) + (y >> 4)) % 2 === 0;
-          const v = light ? 235 : 220;
-          big.d[t] = v;
-          big.d[t + 1] = v;
-          big.d[t + 2] = v;
-          big.d[t + 3] = 255;
-        }
-      }
-      for (let y = 0; y < FH * S; y++) {
-        for (let x = 0; x < FW * S; x++) {
-          const s = (Math.floor((y * SS) / S) * ssW + Math.floor((x * SS) / S)) * 4;
-          if (rgba[s + 3] === 0) continue;
-          const t = (y * FW * S + x) * 4;
-          const sa = rgba[s + 3] / 255;
-          big.d[t] = rgba[s] * sa + big.d[t] * (1 - sa);
-          big.d[t + 1] = rgba[s + 1] * sa + big.d[t + 1] * (1 - sa);
-          big.d[t + 2] = rgba[s + 2] * sa + big.d[t + 2] * (1 - sa);
-          big.d[t + 3] = 255;
-        }
-      }
-      const out = path.join(__dirname, "..", "..", "public", "sprites", `debug-frame-${idx}.png`);
-      fs.writeFileSync(out, encodePNG(FW * S, FH * S, big.toRGBA()));
-      console.log(`debug-frame-${idx}.png (dir=${DIRS[r]}, col=${c}) ${FW * S}x${FH * S}`);
-      process.exit(0);
-    }
-    blitFrame(sheet.d, sheet.w, sheet.h, p.toRGBA(), FW, FH, c * FW, r * FH);
-  }
+function animOf(col) {
+  return col === 0 ? "idle" : col <= 4 ? "walk" : "run";
+}
+function frameOf(col) {
+  return col === 0 ? 0 : col <= 4 ? col - 1 : col - 5;
 }
 
 const outDir = path.join(__dirname, "..", "..", "public", "sprites");
 fs.mkdirSync(outDir, { recursive: true });
 
-// 1) сам лист — чистый, прозрачный, без подписей
-const sheetPNG = encodePNG(sheet.w, sheet.h, sheet.toRGBA());
-fs.writeFileSync(path.join(outDir, "character-sheet.png"), sheetPNG);
-console.log("character-sheet.png", sheetPNG.length, "bytes", `(${sheet.w}x${sheet.h})`);
+// отладка: --debug <idx hero-листа>
+const dbgIdx = process.argv.includes("--debug")
+  ? Math.min(COLS * HERO_ROWS - 1, Math.max(0, Number(process.argv[process.argv.indexOf("--debug") + 1]) || 0))
+  : -1;
 
-// 2) превью на «шахматке» с сеткой — только для контроля (не ассет)
-const prev = new Layer(sheet.w, sheet.h);
-for (let y = 0; y < sheet.h; y++) {
-  for (let x = 0; x < sheet.w; x++) {
-    const light = ((x >> 3) + (y >> 3)) % 2 === 0;
-    const i = (y * sheet.w + x) * 4;
-    const v = light ? 226 : 210;
-    prev.d[i] = v; prev.d[i + 1] = v; prev.d[i + 2] = v; prev.d[i + 3] = 255;
+if (dbgIdx >= 0) {
+  const r = Math.floor(dbgIdx / COLS);
+  const c = dbgIdx % COLS;
+  const p = makePainter(FW, FH);
+  drawCharacter(p, DIRS[r], animOf(c), frameOf(c), HERO);
+  const S = 4;
+  const big = new Layer(FW * S, FH * S);
+  const rgba = p.toRGBA();
+  const ssW = FW * SS;
+  for (let y = 0; y < FH * S; y++) {
+    for (let x = 0; x < FW * S; x++) {
+      const t = (y * FW * S + x) * 4;
+      const light = ((x >> 4) + (y >> 4)) % 2 === 0;
+      const v = light ? 235 : 220;
+      big.d[t] = v;
+      big.d[t + 1] = v;
+      big.d[t + 2] = v;
+      big.d[t + 3] = 255;
+    }
   }
+  for (let y = 0; y < FH * S; y++) {
+    for (let x = 0; x < FW * S; x++) {
+      const s = (Math.floor((y * SS) / S) * ssW + Math.floor((x * SS) / S)) * 4;
+      if (rgba[s + 3] === 0) continue;
+      const t = (y * FW * S + x) * 4;
+      const sa = rgba[s + 3] / 255;
+      big.d[t] = rgba[s] * sa + big.d[t] * (1 - sa);
+      big.d[t + 1] = rgba[s + 1] * sa + big.d[t + 1] * (1 - sa);
+      big.d[t + 2] = rgba[s + 2] * sa + big.d[t + 2] * (1 - sa);
+      big.d[t + 3] = 255;
+    }
+  }
+  fs.writeFileSync(
+    path.join(__dirname, `debug-frame-${dbgIdx}.png`),
+    encodePNG(FW * S, FH * S, big.toRGBA())
+  );
+  console.log(`debug-frame-${dbgIdx}.png (tools/sprites, dir=${DIRS[r]}, col=${c}) ${FW * S}x${FH * S}`);
+  process.exit(0);
 }
-blitFrame(prev.d, prev.w, prev.h, sheet.toRGBA(), sheet.w, sheet.h, 0, 0, 1);
-// сетка
-const gCol = [90, 90, 100, 255];
-for (let c = 0; c <= COLS; c++)
-  for (let y = 0; y < sheet.h; y++) prev.blend(c * FW, y, gCol[0], gCol[1], gCol[2], 120);
-for (let r = 0; r <= ROWS; r++)
-  for (let x = 0; x < sheet.w; x++) prev.blend(x, r * FH, gCol[0], gCol[1], gCol[2], 120);
-const prevPNG = encodePNG(prev.w, prev.h, prev.toRGBA());
-fs.writeFileSync(path.join(outDir, "character-sheet-preview.png"), prevPNG);
-console.log("character-sheet-preview.png", prevPNG.length, "bytes");
 
-// 3) метаданные для интеграции в игру
+function buildSheet(rows, paletteForRow) {
+  const sheet = new Layer(COLS * FW, rows * FH);
+  for (let r = 0; r < rows; r++) {
+    const dir = DIRS[r % HERO_ROWS];
+    for (let c = 0; c < COLS; c++) {
+      const p = makePainter(FW, FH);
+      drawCharacter(p, dir, animOf(c), frameOf(c), paletteForRow(r));
+      blitFrame(sheet.d, sheet.w, sheet.h, p.toRGBA(), FW, FH, c * FW, r * FH);
+    }
+  }
+  return sheet;
+}
+
+// 1) hero-лист
+const hero = buildSheet(HERO_ROWS, () => HERO);
+const heroPNG = encodePNG(hero.w, hero.h, hero.toRGBA());
+fs.writeFileSync(path.join(outDir, "character-sheet.png"), heroPNG);
+console.log(`character-sheet.png ${heroPNG.length} bytes (${hero.w}x${hero.h})`);
+
+// 2) NPC-лист: 4 палитры x 4 направления
+const npc = buildSheet(NPC_ROWS, (r) => NPC_PALETTES[Math.floor(r / HERO_ROWS)]);
+const npcPNG = encodePNG(npc.w, npc.h, npc.toRGBA());
+fs.writeFileSync(path.join(outDir, "npcs.png"), npcPNG);
+console.log(`npcs.png ${npcPNG.length} bytes (${npc.w}x${npc.h})`);
+
+// 3) метаданные
 const meta = {
   file: "character-sheet.png",
   frameWidth: FW,
   frameHeight: FH,
   columns: COLS,
-  rows: ROWS,
+  rows: HERO_ROWS,
   directions: DIRS,
   columnsOrder: ["idle", "walk1", "walk2", "walk3", "walk4", "run1", "run2", "run3", "run4"],
-  sheetWidth: sheet.w,
-  sheetHeight: sheet.h,
+  sheetWidth: hero.w,
+  sheetHeight: hero.h,
   transparent: true,
-  groundLineY: 86,
+  anchorX: 64,
+  groundLineY: 172,
+  npcFile: "npcs.png",
+  npcPalettes: NPC_PALETTES_COUNT,
+  npcRows: NPC_ROWS,
+  npcRowFor: "palette*4 + directionIndex (down=0, up=1, left=2, right=3)",
   notes: "Каждый ряд — направление; колонка 0 — idle, 1-4 — walk, 5-8 — run.",
 };
 fs.writeFileSync(path.join(outDir, "character-meta.json"), JSON.stringify(meta, null, 2));
 console.log("character-meta.json ok");
+
+// 4) превью hero-листа на шахматке (только для контроля)
+const prev = new Layer(hero.w, hero.h);
+for (let y = 0; y < hero.h; y++) {
+  for (let x = 0; x < hero.w; x++) {
+    const light = ((x >> 3) + (y >> 3)) % 2 === 0;
+    const i = (y * hero.w + x) * 4;
+    const v = light ? 226 : 210;
+    prev.d[i] = v;
+    prev.d[i + 1] = v;
+    prev.d[i + 2] = v;
+    prev.d[i + 3] = 255;
+  }
+}
+blitFrame(prev.d, prev.w, prev.h, hero.toRGBA(), hero.w, hero.h, 0, 0, 1);
+const gCol = [90, 90, 100, 255];
+for (let c = 0; c <= COLS; c++)
+  for (let y = 0; y < hero.h; y++) prev.blend(c * FW, y, gCol[0], gCol[1], gCol[2], 120);
+for (let r = 0; r <= HERO_ROWS; r++)
+  for (let x = 0; x < hero.w; x++) prev.blend(x, r * FH, gCol[0], gCol[1], gCol[2], 120);
+fs.writeFileSync(
+  path.join(__dirname, "character-sheet-preview.png"),
+  encodePNG(prev.w, prev.h, prev.toRGBA())
+);
+console.log("character-sheet-preview.png ok (tools/sprites)");

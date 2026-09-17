@@ -1,11 +1,11 @@
 // Мир игры: сетка тайлов, здания, путь, взаимодействия.
 
 export const TILE = 32;
-export const GRID_W = 30;
+export const GRID_W = 34;
 export const GRID_H = 17;
 
 export type GroundKind = "dirt" | "grass" | "road" | "sidewalk" | "building";
-export type TileKind = GroundKind | "door" | "fence" | "tree" | "bench" | "trash";
+export type TileKind = GroundKind | "door" | "fence" | "tree" | "bench" | "trash" | "atm";
 
 export interface Tile {
   kind: TileKind;
@@ -15,13 +15,24 @@ export interface Tile {
   base: GroundKind;
 }
 
-export type JobId = "loading" | "kitchen" | "cleaning";
+export type JobId =
+  | "loading"
+  | "courier"
+  | "driver"
+  | "kitchen"
+  | "cleaning"
+  | "mechanic1"
+  | "mechanic2"
+  | "med1"
+  | "nurse"
+  | "seller"
+  | "computer";
 
 export interface Building {
   id: string;
   name: string;
   kind: "shop" | "shelter" | "work" | "house";
-  job?: JobId;
+  jobs: JobId[];
   x: number;
   y: number;
   w: number;
@@ -39,6 +50,7 @@ export const BUILDINGS: Building[] = [
     id: "shop",
     name: "Продукты «Скидка»",
     kind: "shop",
+    jobs: ["seller"],
     x: 2,
     y: 3,
     w: 5,
@@ -48,44 +60,77 @@ export const BUILDINGS: Building[] = [
     doorX: 4,
     doorY: 5,
     hasDoor: true,
-    desc: "Бедный универсам. Открыт 08:00–21:00.",
+    desc: "Бедный универсам. Открыт 08:00–21:00. Здесь же принимают вещи на продажу.",
   },
   {
     id: "shelter",
     name: "Ночлежка «Рассвет»",
     kind: "shelter",
-    x: 10,
+    jobs: [],
+    x: 8,
     y: 3,
     w: 3,
     h: 3,
     wall: "#8a7f6a",
     roof: "#655d4c",
-    doorX: 11,
+    doorX: 9,
     doorY: 5,
     hasDoor: true,
-    desc: "Койка до утра. Работает круглосуточно.",
+    desc: "Койки, а теперь и одна съёмная комната. Круглосуточно.",
+  },
+  {
+    id: "garage",
+    name: "Автосервис «Гараж»",
+    kind: "work",
+    jobs: ["mechanic1", "mechanic2"],
+    x: 12,
+    y: 3,
+    w: 4,
+    h: 3,
+    wall: "#8a6f5c",
+    roof: "#63503f",
+    doorX: 13,
+    doorY: 5,
+    hasDoor: true,
+    desc: "Запчасти, масло, терпение мастера. Здесь растут механики.",
+  },
+  {
+    id: "clinic",
+    name: "Медпункт",
+    kind: "work",
+    jobs: ["med1", "nurse"],
+    x: 17,
+    y: 3,
+    w: 3,
+    h: 3,
+    wall: "#7fa08f",
+    roof: "#587567",
+    doorX: 18,
+    doorY: 5,
+    hasDoor: true,
+    desc: "Три кабинета, пахнет хлоркой. Здесь же — общественный душ.",
   },
   {
     id: "warehouse",
     name: "Склад №7",
     kind: "work",
-    job: "loading",
-    x: 25,
-    y: 2,
+    jobs: ["loading", "courier", "driver"],
+    x: 26,
+    y: 3,
     w: 4,
     h: 3,
     wall: "#94826b",
     roof: "#6c5f4e",
     doorX: 27,
-    doorY: 4,
+    doorY: 5,
     hasDoor: true,
-    desc: "Ящики, паллеты, спина. Платят наличными.",
+    desc: "Ящики, паллеты, курьерские маршруты. Платят наличными.",
   },
   {
     id: "cafe",
     name: "Кафе «Гусяк»",
     kind: "work",
-    job: "kitchen",
+    jobs: ["kitchen"],
     x: 2,
     y: 12,
     w: 4,
@@ -95,28 +140,13 @@ export const BUILDINGS: Building[] = [
     doorX: 4,
     doorY: 11,
     hasDoor: true,
-    desc: "Помощь на кухне. Вечерняя смена платит больше.",
-  },
-  {
-    id: "office",
-    name: "Участок «Южный»",
-    kind: "work",
-    job: "cleaning",
-    x: 25,
-    y: 12,
-    w: 4,
-    h: 3,
-    wall: "#7e8a6e",
-    roof: "#59634c",
-    doorX: 27,
-    doorY: 11,
-    hasDoor: true,
-    desc: "Муниципальная уборка улиц. Мелко, но стабильно.",
+    desc: "Помощь на кухне. Вечерняя смена платит больше. Грязных не пускают.",
   },
   {
     id: "house1",
     name: "Заброшенный дом",
     kind: "house",
+    jobs: [],
     x: 6,
     y: 13,
     w: 3,
@@ -129,11 +159,44 @@ export const BUILDINGS: Building[] = [
     desc: "Окна заколочены досками.",
   },
   {
+    id: "internet",
+    name: "Интернет-кафе «Вайфай»",
+    kind: "work",
+    jobs: ["computer"],
+    x: 10,
+    y: 12,
+    w: 3,
+    h: 3,
+    wall: "#6f7d94",
+    roof: "#4e5a6e",
+    doorX: 11,
+    doorY: 11,
+    hasDoor: true,
+    desc: "Шесть тупых компьютеров и вечный гул системников. По $2 за час.",
+  },
+  {
+    id: "office",
+    name: "Участок «Южный»",
+    kind: "work",
+    jobs: ["cleaning"],
+    x: 26,
+    y: 12,
+    w: 3,
+    h: 3,
+    wall: "#7e8a6e",
+    roof: "#59634c",
+    doorX: 27,
+    doorY: 11,
+    hasDoor: true,
+    desc: "Муниципальная уборка улиц. Здесь оформляют документы.",
+  },
+  {
     id: "house2",
     name: "Старый дом",
     kind: "house",
-    x: 17,
-    y: 2,
+    jobs: [],
+    x: 25,
+    y: 1,
     w: 3,
     h: 2,
     wall: "#756a5e",
@@ -147,7 +210,7 @@ export const BUILDINGS: Building[] = [
 
 export const START = { x: 13, y: 7 };
 
-/** Раскладка квартала: дорога-скрещение, тротуары, парк, здания, лавки, баки, забор по периметру. */
+/** Раскладка квартала: дорога-перекрёсток, тротуары, парк, здания, лавки, баки, банкоматы. */
 export function buildGrid(): Tile[][] {
   const g: Tile[][] = [];
   for (let y = 0; y < GRID_H; y++) {
@@ -162,7 +225,7 @@ export function buildGrid(): Tile[][] {
   };
 
   // парк (единственная зелень в квартале)
-  for (let y = 11; y <= 16; y++) for (let x = 11; x <= 19; x++) set(x, y, "grass");
+  for (let y = 11; y <= 16; y++) for (let x = 14; x <= 20; x++) set(x, y, "grass");
 
   // дороги
   for (let x = 0; x < GRID_W; x++) {
@@ -170,8 +233,8 @@ export function buildGrid(): Tile[][] {
     set(x, 9, "road");
   }
   for (let y = 0; y < GRID_H; y++) {
-    set(21, y, "road");
     set(22, y, "road");
+    set(23, y, "road");
   }
 
   // тротуары вдоль дорог
@@ -180,8 +243,8 @@ export function buildGrid(): Tile[][] {
     set(x, 10, "sidewalk");
   }
   for (let y = 0; y < GRID_H; y++) {
-    set(20, y, "sidewalk");
-    set(23, y, "sidewalk");
+    set(21, y, "sidewalk");
+    set(24, y, "sidewalk");
   }
 
   // здания
@@ -198,16 +261,16 @@ export function buildGrid(): Tile[][] {
 
   // деревья в парке
   for (const [x, y] of [
-    [12, 12],
-    [18, 12],
-    [15, 15],
+    [15, 12],
+    [19, 12],
+    [17, 15],
   ])
     set(x, y, "tree");
 
   // лавки
   for (const [x, y] of [
-    [13, 13],
-    [17, 14],
+    [16, 13],
+    [19, 14],
   ])
     set(x, y, "bench");
 
@@ -215,9 +278,16 @@ export function buildGrid(): Tile[][] {
   for (const [x, y] of [
     [7, 6],
     [6, 11],
-    [23, 13],
+    [29, 13],
   ])
     set(x, y, "trash");
+
+  // банкоматы
+  for (const [x, y] of [
+    [11, 6],
+    [31, 10],
+  ])
+    set(x, y, "atm");
 
   // забор по периметру квартала
   for (let x = 0; x < GRID_W; x++) {
@@ -296,13 +366,13 @@ export function bfs(
 }
 
 export interface Interactive {
-  kind: "door" | "bench" | "trash";
+  kind: "door" | "bench" | "trash" | "atm";
   x: number;
   y: number;
   b?: string;
 }
 
-/** Ближайшее взаимодействуемое: дверь под ногами, затем соседние двери, лавки, баки. */
+/** Ближайшее взаимодействуемое: дверь под ногами, затем соседние двери, лавки, банкоматы, баки. */
 export function findInteractive(
   g: Tile[][],
   px: number,
@@ -323,6 +393,7 @@ export function findInteractive(
     if (!t) continue;
     if (t.kind === "door") return { kind: "door", x, y, b: t.b };
     if (t.kind === "bench") return { kind: "bench", x, y };
+    if (t.kind === "atm") return { kind: "atm", x, y };
   }
   for (const [x, y] of n) {
     const t = g[y]?.[x];

@@ -1,13 +1,32 @@
-// Отрисовка мира: статический слой (грунт, здания, дороги) и динамическая рамка (игрок, ночь, путь).
+// Отрисовка мира: статический слой (грунт, здания, дороги) и динамическая рамка
+// (игрок с анимациями, ночь, дождь, путь).
 
 import { BUILDINGS, GRID_H, GRID_W, TILE, buildGrid } from "./world";
-import type { GameState } from "./reducer";
+import type { Facing, GameState, Weather } from "./types";
+
+export interface PlayerColors {
+  jacket: string;
+  pants: string;
+  shoes: string;
+  hat: { color: string; kind: string } | null;
+}
+
+export interface PlayerInfo {
+  x: number; // плавная позиция в тайлах
+  y: number;
+  dir: Facing;
+  mode: "idle" | "walk" | "run" | "work" | "rest";
+  riding: boolean;
+  colors: PlayerColors;
+}
 
 export interface FrameInfo {
   state: GameState;
   path: [number, number][];
   hover: [number, number] | null;
   target: { x: number; y: number } | null;
+  player: PlayerInfo;
+  weather: Weather;
 }
 
 const W = GRID_W * TILE;
@@ -34,6 +53,23 @@ function groundColor(base: string, b?: string): string {
     default:
       return "#4a443c";
   }
+}
+
+function rrect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number
+): void {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 function drawGround(
@@ -140,8 +176,17 @@ export function makeStaticLayer(): HTMLCanvasElement {
         ctx.fillRect(px + 8, py + 14, 16, 3);
         ctx.fillStyle = "rgba(0,0,0,0.25)";
         ctx.fillRect(px + 8, py + 22, 16, 5);
+      } else if (t.kind === "atm") {
+        ctx.fillStyle = "#3d434c";
+        rrect(ctx, px + 7, py + 5, 18, 22, 3);
+        ctx.fill();
+        ctx.fillStyle = "#9fd8a8";
+        ctx.fillRect(px + 10, py + 8, 12, 8);
+        ctx.fillStyle = "#2a2f36";
+        ctx.fillRect(px + 10, py + 19, 12, 4);
+        ctx.fillStyle = "rgba(255,255,255,0.25)";
+        ctx.fillRect(px + 8, py + 25, 16, 2);
       } else if (t.kind === "door") {
-        // порог
         ctx.fillStyle = "#8a8f96";
         ctx.fillRect(px + 4, py + 27, 24, 5);
         if (t.base === "building") {
@@ -209,8 +254,8 @@ export function makeStaticLayer(): HTMLCanvasElement {
   ctx.lineTo(W, 9 * TILE - 1);
   ctx.stroke();
   ctx.beginPath();
-  ctx.moveTo(22 * TILE - 1, 0);
-  ctx.lineTo(22 * TILE - 1, H);
+  ctx.moveTo(23 * TILE - 1, 0);
+  ctx.lineTo(23 * TILE - 1, H);
   ctx.stroke();
   ctx.setLineDash([]);
 
@@ -225,31 +270,217 @@ function darkness(minutes: number): number {
   return 0;
 }
 
-function rrect(
+/* ---------- персонаж ---------- */
+
+function drawHead(
   ctx: CanvasRenderingContext2D,
-  x: number,
-  y: number,
-  w: number,
-  h: number,
-  r: number
+  hx: number,
+  hy: number,
+  dir: Facing,
+  colors: PlayerColors
 ): void {
+  // лицо
+  ctx.fillStyle = "#e7c39c";
   ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.arcTo(x + w, y, x + w, y + h, r);
-  ctx.arcTo(x + w, y + h, x, y + h, r);
-  ctx.arcTo(x, y + h, x, y, r);
-  ctx.arcTo(x, y, x + w, y, r);
-  ctx.closePath();
+  ctx.arc(hx, hy, 7, 0, Math.PI * 2);
+  ctx.fill();
+  // волосы
+  ctx.fillStyle = "#3a2e25";
+  if (dir === "up") {
+    ctx.beginPath();
+    ctx.arc(hx, hy, 7, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (dir === "down") {
+    ctx.beginPath();
+    ctx.arc(hx, hy - 1, 7, Math.PI, 0);
+    ctx.fill();
+    ctx.fillStyle = "#2c241d";
+    ctx.beginPath();
+    ctx.arc(hx - 2.5, hy + 2, 1.2, 0, Math.PI * 2);
+    ctx.arc(hx + 2.5, hy + 2, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (dir === "left") {
+    ctx.beginPath();
+    ctx.arc(hx, hy, 7, -Math.PI / 2, Math.PI / 2);
+    ctx.fill();
+    ctx.fillStyle = "#2c241d";
+    ctx.beginPath();
+    ctx.arc(hx - 3.5, hy + 1, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.arc(hx, hy, 7, Math.PI / 2, (3 * Math.PI) / 2);
+    ctx.fill();
+    ctx.fillStyle = "#2c241d";
+    ctx.beginPath();
+    ctx.arc(hx + 3.5, hy + 1, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // головной убор
+  if (colors.hat) {
+    ctx.fillStyle = colors.hat.color;
+    ctx.beginPath();
+    ctx.arc(hx, hy - 0.5, 7.2, 0, Math.PI * 2);
+    ctx.fill();
+    // козырёк по направлению
+    ctx.fillRect(
+      dir === "down" ? hx - 6 : dir === "left" ? hx - 10 : hx - 6,
+      dir === "down" ? hy + 4 : dir === "up" ? hy - 10 : hy - 2,
+      dir === "down" || dir === "up" ? 12 : 4,
+      dir === "down" || dir === "up" ? 4 : 12
+    );
+    // шапка-ушанка: помпон
+    if (colors.hat.kind === "beanie") {
+      ctx.fillStyle = "#e8e2d5";
+      ctx.beginPath();
+      ctx.arc(hx, hy - 7, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
 }
 
-/** Динамическая часть кадра: путь, игрок, ночь, подсказка «E». */
+function drawBikeRider(
+  ctx: CanvasRenderingContext2D,
+  cx: number,
+  cy: number,
+  dir: Facing,
+  colors: PlayerColors,
+  t: number
+): void {
+  const ped = Math.sin(t / 90) * 3;
+  // колёса
+  ctx.strokeStyle = "#20242a";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(cx - 9, cy + 8, 5, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(cx + 9, cy + 8, 5, 0, Math.PI * 2);
+  ctx.stroke();
+  // рама
+  ctx.strokeStyle = "#c0392b";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(cx - 9, cy + 8);
+  ctx.lineTo(cx, cy + 1);
+  ctx.lineTo(cx + 9, cy + 8);
+  ctx.moveTo(cx, cy + 1);
+  ctx.lineTo(cx + 1, cy - 5);
+  ctx.stroke();
+  // педали
+  ctx.fillStyle = "#555a5f";
+  ctx.fillRect(cx - 2 + ped, cy + 4, 4, 3);
+  ctx.fillRect(cx - 2 - ped, cy + 4, 4, 3);
+  // райдер
+  ctx.fillStyle = colors.jacket;
+  rrect(ctx, cx - 7, cy - 8, 14, 12, 5);
+  ctx.fill();
+  ctx.fillStyle = colors.pants;
+  ctx.fillRect(cx - 5, cy + 2, 4, 5);
+  ctx.fillRect(cx + 1, cy + 2, 4, 5);
+  drawHead(ctx, cx, cy - 11, dir, colors);
+}
+
+function drawPlayer(ctx: CanvasRenderingContext2D, p: PlayerInfo, t: number): void {
+  const cx = (p.x + 0.5) * TILE;
+  const cy = (p.y + 0.5) * TILE;
+
+  // тень
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + 11, 10, 4.5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (p.riding) {
+    drawBikeRider(ctx, cx, cy, p.dir, p.colors, t);
+    return;
+  }
+
+  // сон/отдых: лежит на лавке
+  if (p.mode === "rest") {
+    ctx.fillStyle = p.colors.jacket;
+    rrect(ctx, cx - 12, cy - 4, 24, 10, 5);
+    ctx.fill();
+    ctx.fillStyle = "#e7c39c";
+    ctx.beginPath();
+    ctx.arc(cx + 10, cy + 1, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.textAlign = "center";
+    const z1 = (t / 60) % 10;
+    const z2 = ((t / 60 + 5) % 10);
+    ctx.font = "bold 9px system-ui, sans-serif";
+    ctx.fillText("z", cx + 4, cy - 10 - z1 * 0.5);
+    ctx.font = "bold 7px system-ui, sans-serif";
+    ctx.fillText("z", cx + 10, cy - 16 - z2 * 0.5);
+    return;
+  }
+
+  const moving = p.mode === "walk" || p.mode === "run";
+  const workMode = p.mode === "work";
+  const speed = p.mode === "run" ? 70 : workMode ? 85 : 120;
+  const amp = p.mode === "run" ? 5 : 3.5;
+  const phase = moving || workMode ? Math.sin(t / speed) : 0;
+  const bob = p.mode === "idle" ? Math.sin(t / 500) * 0.8 : 0;
+  const lean = p.mode === "run" ? (p.dir === "left" ? -1 : p.dir === "right" ? 1 : 0) : 0;
+  const oy = cy - 2 + bob + lean * 0;
+
+  // ноги (обувь)
+  const f1 = phase * amp;
+  const f2 = -phase * amp;
+  ctx.fillStyle = p.colors.shoes;
+  rrect(ctx, cx - 6.5, oy + 6 + f1, 5, 7, 2);
+  ctx.fill();
+  rrect(ctx, cx + 1.5, oy + 6 + f2, 5, 7, 2);
+  ctx.fill();
+
+  // руки
+  ctx.fillStyle = p.colors.jacket;
+  ctx.beginPath();
+  ctx.arc(cx - 11, oy + 2 + f2, 3.4, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(cx + 11, oy + 2 + f1, 3.4, 0, Math.PI * 2);
+  ctx.fill();
+
+  // корпус
+  ctx.fillStyle = p.colors.jacket;
+  rrect(ctx, cx - 9, oy - 8, 18, 16, 6);
+  ctx.fill();
+  ctx.strokeStyle = "rgba(0,0,0,0.25)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // пояс/брюки
+  ctx.fillStyle = p.colors.pants;
+  rrect(ctx, cx - 8, oy + 4, 16, 6, 3);
+  ctx.fill();
+
+  // голова
+  const hx = cx + (p.dir === "left" ? -1 : p.dir === "right" ? 1 : 0);
+  drawHead(ctx, hx, oy - 12, p.dir, p.colors);
+
+  // искра при работе
+  if (workMode) {
+    const sp = (t / 250) % 1;
+    ctx.globalAlpha = Math.max(0, 1 - sp);
+    ctx.fillStyle = "rgba(255, 210, 90, 0.95)";
+    ctx.beginPath();
+    ctx.arc(cx + 9, oy - 18 - sp * 8, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* ---------- кадр ---------- */
+
 export function drawFrame(
   ctx: CanvasRenderingContext2D,
   staticLayer: HTMLCanvasElement,
   info: FrameInfo,
   t: number
 ): void {
-  const { state, path, hover, target } = info;
+  const { state, path, hover, target, player, weather } = info;
   ctx.setTransform(SCALE, 0, 0, SCALE, 0, 0);
   ctx.clearRect(0, 0, W, H);
   ctx.drawImage(staticLayer, 0, 0, W, H);
@@ -278,50 +509,12 @@ export function drawFrame(
     ctx.fillRect(hx * TILE, hy * TILE, TILE, TILE);
   }
 
-  // игрок
-  const px = (state.x + 0.5) * TILE;
-  const py = (state.y + 0.5) * TILE;
-  const bob = state.dead ? 0 : Math.sin(t / 170) * 1.6;
-  ctx.fillStyle = "rgba(0,0,0,0.3)";
-  ctx.beginPath();
-  ctx.ellipse(px, py + 11, 9, 4, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  if (state.dead) {
-    ctx.fillStyle = "#6b6f76";
-    ctx.strokeStyle = "#3c3f44";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(px, py + 6, 10, 5, 0, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(px - 4, py + 2, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  } else {
-    ctx.fillStyle = "#b5433a";
-    ctx.strokeStyle = "#6f241e";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(px, py + bob, 9, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.fillStyle = "#e7c39c";
-    ctx.strokeStyle = "#a97c50";
-    ctx.beginPath();
-    ctx.arc(px, py - 8 + bob, 6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
-  }
-
   // ночь
   const dark = darkness(state.minutes);
   if (dark > 0) {
     ctx.fillStyle = `rgba(8, 12, 34, ${dark})`;
     ctx.fillRect(0, 0, W, H);
 
-    // горящие окна
     ctx.fillStyle = "rgba(255, 196, 102, 0.7)";
     for (const b of BUILDINGS) {
       const roofBottom = b.y * TILE + roofH(b.h);
@@ -334,15 +527,58 @@ export function drawFrame(
         }
       }
     }
+  }
 
-    // слабый свет вокруг персонажа
+  // персонаж
+  if (state.dead) {
+    const cx = (state.x + 0.5) * TILE;
+    const cy = (state.y + 0.5) * TILE;
+    ctx.fillStyle = "rgba(0,0,0,0.3)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 8, 11, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#6b6f76";
+    ctx.strokeStyle = "#3c3f44";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 4, 10, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx - 5, cy, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  } else {
+    drawPlayer(ctx, player, t);
+  }
+
+  // слабый свет вокруг персонажа ночью
+  if (dark > 0 && !state.dead) {
+    const px = (state.x + 0.5) * TILE;
+    const py = (state.y + 0.5) * TILE;
     const g = ctx.createRadialGradient(px, py, 4, px, py, 46);
-    g.addColorStop(0, "rgba(255,196,110,0.2)");
+    g.addColorStop(0, "rgba(255,196,110,0.18)");
     g.addColorStop(1, "rgba(255,196,110,0)");
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(px, py, 46, 0, Math.PI * 2);
     ctx.fill();
+  }
+
+  // дождь
+  if (weather === "rain") {
+    ctx.fillStyle = "rgba(20, 30, 50, 0.12)";
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = "rgba(180, 200, 230, 0.28)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (let i = 0; i < 70; i++) {
+      const rx = (i * 97 + t * 0.25) % W;
+      const ry = (i * 61 + t * 0.9) % H;
+      ctx.moveTo(rx, ry);
+      ctx.lineTo(rx - 3, ry + 7);
+    }
+    ctx.stroke();
   }
 
   // подсказка «E»

@@ -46,7 +46,7 @@ import {
   xpForNext,
 } from "@/game/character";
 import { clearSave, hasSave, loadGame, saveGame } from "@/game/save";
-import { drawFrame, makeStaticLayer } from "@/game/render";
+import { drawFrame, initCharacterSheet, makeStaticLayer } from "@/game/render";
 import type { PlayerColors } from "@/game/render";
 
 type Dialog =
@@ -186,6 +186,7 @@ export default function Game() {
 
   useEffect(() => {
     setStaticLayer(makeStaticLayer());
+    initCharacterSheet(); // PNG-лист персонажа, один раз (singleton)
   }, []);
 
   // главный цикл

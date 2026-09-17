@@ -2,6 +2,7 @@
 // (игрок с анимациями, ночь, дождь, путь).
 
 import { BUILDINGS, GRID_H, GRID_W, TILE, buildGrid } from "./world";
+import type { Building, Tile } from "./world";
 import type { Facing, GameState, Weather } from "./types";
 
 export interface PlayerColors {
@@ -32,6 +33,7 @@ export interface FrameInfo {
 const W = GRID_W * TILE;
 const H = GRID_H * TILE;
 const SCALE = 2; // рендерим в 2x для чёткости
+const WORLD_GRID = buildGrid();
 
 function rnd(x: number, y: number, salt: number): number {
   const n = Math.sin(x * 127.1 + y * 311.7 + salt * 74.7) * 43758.5453;
@@ -115,6 +117,168 @@ function roofH(bh: number): number {
   return Math.max(26, Math.floor(bh * TILE * 0.42));
 }
 
+/** Отрисовка одиночного объекта тайла (используется и в статичном слое, и в depth-проходе). */
+function drawObjectTile(
+  ctx: CanvasRenderingContext2D,
+  t: Tile,
+  x: number,
+  y: number
+): void {
+  const px = x * TILE;
+  const py = y * TILE;
+
+  if (t.kind === "fence") {
+    ctx.fillStyle = "#5d4c39";
+    ctx.fillRect(px, py + 10, TILE, 4);
+    ctx.fillRect(px, py + 20, TILE, 4);
+    ctx.fillStyle = "#4d3f30";
+    ctx.fillRect(px + 5, py + 5, 4, 22);
+    ctx.fillRect(px + 23, py + 5, 4, 22);
+  } else if (t.kind === "tree") {
+    ctx.fillStyle = "#5b432c";
+    ctx.fillRect(px + 13, py + 15, 6, 13);
+    ctx.fillStyle = "#2f4a2b";
+    ctx.beginPath();
+    ctx.arc(px + 16, py + 12, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#3c5c37";
+    ctx.beginPath();
+    ctx.arc(px + 12, py + 13, 6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#47703f";
+    ctx.beginPath();
+    ctx.arc(px + 20, py + 9, 5, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (t.kind === "bench") {
+    ctx.fillStyle = "#5f4023";
+    ctx.fillRect(px + 6, py + 14, 4, 9);
+    ctx.fillRect(px + 22, py + 14, 4, 9);
+    ctx.fillStyle = "#8a5a33";
+    ctx.fillRect(px + 4, py + 9, 24, 5);
+    ctx.fillRect(px + 4, py + 4, 24, 3);
+  } else if (t.kind === "trash") {
+    ctx.fillStyle = "#4f5d4a";
+    ctx.fillRect(px + 8, py + 9, 16, 18);
+    ctx.fillStyle = "#3f4a3b";
+    ctx.fillRect(px + 6, py + 6, 20, 4);
+    ctx.fillRect(px + 8, py + 14, 16, 3);
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillRect(px + 8, py + 22, 16, 5);
+  } else if (t.kind === "atm") {
+    ctx.fillStyle = "#3d434c";
+    rrect(ctx, px + 7, py + 5, 18, 22, 3);
+    ctx.fill();
+    ctx.fillStyle = "#9fd8a8";
+    ctx.fillRect(px + 10, py + 8, 12, 8);
+    ctx.fillStyle = "#2a2f36";
+    ctx.fillRect(px + 10, py + 19, 12, 4);
+    ctx.fillStyle = "rgba(255,255,255,0.25)";
+    ctx.fillRect(px + 8, py + 25, 16, 2);
+  } else if (t.kind === "door") {
+    ctx.fillStyle = "#8a8f96";
+    ctx.fillRect(px + 4, py + 27, 24, 5);
+    if (t.base === "building") {
+      ctx.fillStyle = "#3a3f47";
+      ctx.fillRect(px + 6, py + 4, 20, 24);
+    }
+    ctx.fillStyle = "#6b4a2f";
+    ctx.fillRect(px + 9, py + 8, 14, 19);
+    ctx.fillStyle = "#d8b56a";
+    ctx.beginPath();
+    ctx.arc(px + 20, py + 18, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+/** Отрисовка здания (фасад, окна, вывеска). */
+function drawBuildingArt(ctx: CanvasRenderingContext2D, b: Building): void {
+  const rh = roofH(b.h);
+  ctx.fillStyle = b.roof;
+  ctx.fillRect(b.x * TILE, b.y * TILE, b.w * TILE, rh);
+  ctx.fillStyle = "rgba(0,0,0,0.25)";
+  ctx.fillRect(b.x * TILE, b.y * TILE + rh - 3, b.w * TILE, 3);
+
+  for (let yy = b.y; yy < b.y + b.h; yy++) {
+    for (let xx = b.x; xx < b.x + b.w; xx++) {
+      if (xx === b.doorX && yy === b.doorY) continue;
+      const wy = yy * TILE + 10;
+      if (wy <= b.y * TILE + rh) continue;
+      const wx = xx * TILE + 10;
+      const broken = (xx * 7 + yy * 13) % 6 === 0;
+      ctx.fillStyle = broken ? "#1d2129" : "#2f3540";
+      ctx.fillRect(wx, wy, 12, 12);
+      if (!broken) {
+        ctx.strokeStyle = "rgba(255,255,255,0.22)";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(wx + 0.5, wy + 0.5, 11, 11);
+        ctx.strokeStyle = "rgba(0,0,0,0.3)";
+        ctx.beginPath();
+        ctx.moveTo(wx + 6, wy);
+        ctx.lineTo(wx + 6, wy + 12);
+        ctx.moveTo(wx, wy + 6);
+        ctx.lineTo(wx + 12, wy + 6);
+        ctx.stroke();
+      }
+    }
+  }
+
+  ctx.font = "bold 11px system-ui, -apple-system, sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  ctx.shadowColor = "rgba(0,0,0,0.9)";
+  ctx.shadowBlur = 3;
+  ctx.fillStyle = "rgba(255,255,255,0.88)";
+  ctx.fillText(b.name, (b.x + b.w / 2) * TILE, b.y * TILE - 5);
+  ctx.shadowBlur = 0;
+}
+
+/* ---------- depth-проход: объекты перед персонажем ---------- */
+
+interface ForegroundItem {
+  t: Tile;
+  x: number;
+  y: number;
+  top: number; // верх арта, px
+  base: number; // линия опоры на земле, px
+}
+
+/**
+ * Объекты, которые должны закрывать персонажа, когда он стоит «позади» них
+ * (линия опоры объекта южнее линии его ног).
+ */
+const FOREGROUND: ForegroundItem[] = (() => {
+  const items: ForegroundItem[] = [];
+  for (let y = 0; y < GRID_H; y++) {
+    for (let x = 0; x < GRID_W; x++) {
+      const t = WORLD_GRID[y][x];
+      const py = y * TILE;
+      switch (t.kind) {
+        case "tree":
+          items.push({ t, x, y, top: py + 2, base: py + 28 });
+          break;
+        case "bench":
+          items.push({ t, x, y, top: py + 4, base: py + 23 });
+          break;
+        case "trash":
+          items.push({ t, x, y, top: py + 6, base: py + 27 });
+          break;
+        case "atm":
+          items.push({ t, x, y, top: py + 5, base: py + 27 });
+          break;
+        case "fence":
+          items.push({ t, x, y, top: py + 5, base: py + 28 });
+          break;
+        case "door":
+          items.push({ t, x, y, top: py + 4, base: py + 12 });
+          break;
+        default:
+          break;
+      }
+    }
+  }
+  return items;
+})();
+
 /** Статичный слой квартала, рисуется один раз. */
 export function makeStaticLayer(): HTMLCanvasElement {
   const c = document.createElement("canvas");
@@ -122,7 +286,7 @@ export function makeStaticLayer(): HTMLCanvasElement {
   c.height = H * SCALE;
   const ctx = c.getContext("2d")!;
   ctx.scale(SCALE, SCALE);
-  const grid = buildGrid();
+  const grid = WORLD_GRID;
 
   // проход 1: грунт
   for (let y = 0; y < GRID_H; y++) {
@@ -135,114 +299,13 @@ export function makeStaticLayer(): HTMLCanvasElement {
   // проход 2: объекты на тайлах
   for (let y = 0; y < GRID_H; y++) {
     for (let x = 0; x < GRID_W; x++) {
-      const t = grid[y][x];
-      const px = x * TILE;
-      const py = y * TILE;
-
-      if (t.kind === "fence") {
-        ctx.fillStyle = "#5d4c39";
-        ctx.fillRect(px, py + 10, TILE, 4);
-        ctx.fillRect(px, py + 20, TILE, 4);
-        ctx.fillStyle = "#4d3f30";
-        ctx.fillRect(px + 5, py + 5, 4, 22);
-        ctx.fillRect(px + 23, py + 5, 4, 22);
-      } else if (t.kind === "tree") {
-        ctx.fillStyle = "#5b432c";
-        ctx.fillRect(px + 13, py + 15, 6, 13);
-        ctx.fillStyle = "#2f4a2b";
-        ctx.beginPath();
-        ctx.arc(px + 16, py + 12, 10, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = "#3c5c37";
-        ctx.beginPath();
-        ctx.arc(px + 12, py + 13, 6, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.fillStyle = "#47703f";
-        ctx.beginPath();
-        ctx.arc(px + 20, py + 9, 5, 0, Math.PI * 2);
-        ctx.fill();
-      } else if (t.kind === "bench") {
-        ctx.fillStyle = "#5f4023";
-        ctx.fillRect(px + 6, py + 14, 4, 9);
-        ctx.fillRect(px + 22, py + 14, 4, 9);
-        ctx.fillStyle = "#8a5a33";
-        ctx.fillRect(px + 4, py + 9, 24, 5);
-        ctx.fillRect(px + 4, py + 4, 24, 3);
-      } else if (t.kind === "trash") {
-        ctx.fillStyle = "#4f5d4a";
-        ctx.fillRect(px + 8, py + 9, 16, 18);
-        ctx.fillStyle = "#3f4a3b";
-        ctx.fillRect(px + 6, py + 6, 20, 4);
-        ctx.fillRect(px + 8, py + 14, 16, 3);
-        ctx.fillStyle = "rgba(0,0,0,0.25)";
-        ctx.fillRect(px + 8, py + 22, 16, 5);
-      } else if (t.kind === "atm") {
-        ctx.fillStyle = "#3d434c";
-        rrect(ctx, px + 7, py + 5, 18, 22, 3);
-        ctx.fill();
-        ctx.fillStyle = "#9fd8a8";
-        ctx.fillRect(px + 10, py + 8, 12, 8);
-        ctx.fillStyle = "#2a2f36";
-        ctx.fillRect(px + 10, py + 19, 12, 4);
-        ctx.fillStyle = "rgba(255,255,255,0.25)";
-        ctx.fillRect(px + 8, py + 25, 16, 2);
-      } else if (t.kind === "door") {
-        ctx.fillStyle = "#8a8f96";
-        ctx.fillRect(px + 4, py + 27, 24, 5);
-        if (t.base === "building") {
-          ctx.fillStyle = "#3a3f47";
-          ctx.fillRect(px + 6, py + 4, 20, 24);
-        }
-        ctx.fillStyle = "#6b4a2f";
-        ctx.fillRect(px + 9, py + 8, 14, 19);
-        ctx.fillStyle = "#d8b56a";
-        ctx.beginPath();
-        ctx.arc(px + 20, py + 18, 1.6, 0, Math.PI * 2);
-        ctx.fill();
-      }
+      drawObjectTile(ctx, grid[y][x], x, y);
     }
   }
 
   // проход 3: здания (крыши, окна, вывески)
   for (const b of BUILDINGS) {
-    const rh = roofH(b.h);
-    ctx.fillStyle = b.roof;
-    ctx.fillRect(b.x * TILE, b.y * TILE, b.w * TILE, rh);
-    ctx.fillStyle = "rgba(0,0,0,0.25)";
-    ctx.fillRect(b.x * TILE, b.y * TILE + rh - 3, b.w * TILE, 3);
-
-    for (let yy = b.y; yy < b.y + b.h; yy++) {
-      for (let xx = b.x; xx < b.x + b.w; xx++) {
-        if (xx === b.doorX && yy === b.doorY) continue;
-        const wy = yy * TILE + 10;
-        if (wy <= b.y * TILE + rh) continue;
-        const wx = xx * TILE + 10;
-        const broken = (xx * 7 + yy * 13) % 6 === 0;
-        ctx.fillStyle = broken ? "#1d2129" : "#2f3540";
-        ctx.fillRect(wx, wy, 12, 12);
-        if (!broken) {
-          ctx.strokeStyle = "rgba(255,255,255,0.22)";
-          ctx.lineWidth = 1;
-          ctx.strokeRect(wx + 0.5, wy + 0.5, 11, 11);
-          ctx.strokeStyle = "rgba(0,0,0,0.3)";
-          ctx.beginPath();
-          ctx.moveTo(wx + 6, wy);
-          ctx.lineTo(wx + 6, wy + 12);
-          ctx.moveTo(wx, wy + 6);
-          ctx.lineTo(wx + 12, wy + 6);
-          ctx.stroke();
-        }
-      }
-    }
-
-    ctx.font = "bold 11px system-ui, -apple-system, sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "alphabetic";
-    ctx.shadowColor = "rgba(0,0,0,0.9)";
-    ctx.shadowBlur = 3;
-    ctx.fillStyle = "rgba(255,255,255,0.88)";
-    ctx.fillText(b.name, (b.x + b.w / 2) * TILE, b.y * TILE - 5);
-    ctx.shadowBlur = 0;
+    drawBuildingArt(ctx, b);
   }
 
   // разметка дорог
@@ -270,7 +333,104 @@ function darkness(minutes: number): number {
   return 0;
 }
 
-/* ---------- персонаж ---------- */
+/* ---------- спрайт-лист персонажа ---------- */
+
+const SHEET_SRC = "/sprites/character-sheet.png";
+const SHEET_FRAME_W = 64; // кадр листа
+const SHEET_FRAME_H = 96;
+const SHEET_DIR_ROW: Record<Facing, number> = { down: 0, up: 1, left: 2, right: 3 };
+// точка опоры персонажа внутри кадра (центр x=32, линия земли y=86)
+const SHEET_FOOT_X = 32;
+const SHEET_FOOT_Y = 86;
+// масштаб на карте: кадр 64x96 -> 32x64 px = ~1x2 тайла
+const CHAR_SCALE = 0.5;
+const CHAR_W = SHEET_FRAME_W * CHAR_SCALE; // 32
+const CHAR_H = SHEET_FRAME_H * CHAR_SCALE; // 64
+const ANCHOR_X = SHEET_FOOT_X * CHAR_SCALE; // 16
+const ANCHOR_Y = SHEET_FOOT_Y * CHAR_SCALE; // 43
+// ms на кадр анимации — зависит от состояния
+const WALK_FRAME_MS = 80;
+const RUN_FRAME_MS = 45;
+
+let sheetImg: HTMLImageElement | null = null;
+let sheetReady = false;
+
+/**
+ * Загружает спрайт-лист один раз (singleton). До загрузки drawFrame
+ * рисует старый программный placeholder — см. drawPlayerFallback.
+ */
+export function initCharacterSheet(): void {
+  if (sheetImg) return;
+  const img = new Image();
+  sheetImg = img;
+  img.onload = () => {
+    sheetReady = true;
+  };
+  img.onerror = () => {
+    sheetReady = false;
+    console.warn("Не удалось загрузить спрайт-лист: " + SHEET_SRC);
+  };
+  img.src = SHEET_SRC;
+}
+
+/** Колонка листа: 0 = idle, 1–4 = walk, 5–8 = run (цикл по времени, без зависимости от FPS). */
+function sheetColumn(mode: PlayerInfo["mode"], t: number): number {
+  if (mode === "run") return 5 + (Math.floor(t / RUN_FRAME_MS) % 4);
+  if (mode === "walk") return 1 + (Math.floor(t / WALK_FRAME_MS) % 4);
+  return 0; // idle и work — неподвижный кадр
+}
+
+/** Спрайт персонажа: ноги в координате тайла, корпус вверх от неё. */
+function drawSheetCharacter(ctx: CanvasRenderingContext2D, p: PlayerInfo, t: number): void {
+  const img = sheetImg;
+  if (!img) return;
+  const col = sheetColumn(p.mode, t);
+  const row = SHEET_DIR_ROW[p.dir];
+  const feetX = (p.x + 0.5) * TILE;
+  const feetY = (p.y + 0.5) * TILE;
+  ctx.drawImage(
+    img,
+    // source — всегда целые пиксели листа (чёткость на Retina)
+    col * SHEET_FRAME_W,
+    row * SHEET_FRAME_H,
+    SHEET_FRAME_W,
+    SHEET_FRAME_H,
+    feetX - ANCHOR_X,
+    feetY - ANCHOR_Y,
+    CHAR_W,
+    CHAR_H
+  );
+}
+
+/** Depth-проход: перечерчивает объекты/здания, стоящие «перед» ногами персонажа. */
+function drawForeground(ctx: CanvasRenderingContext2D, feetX: number, feetY: number): void {
+  const rx0 = feetX - ANCHOR_X - 2;
+  const rx1 = feetX + ANCHOR_X + 2;
+  const ry0 = feetY - ANCHOR_Y - 2;
+  const ry1 = feetY + (SHEET_FRAME_H - SHEET_FOOT_Y) * CHAR_SCALE + 2;
+
+  for (const it of FOREGROUND) {
+    if (it.base <= feetY) continue; // объект позади персонажа
+    const tx0 = it.x * TILE;
+    const tx1 = tx0 + TILE;
+    if (tx1 <= rx0 || tx0 >= rx1) continue;
+    if (it.base + 2 <= ry0 || it.top >= ry1) continue;
+    drawObjectTile(ctx, it.t, it.x, it.y);
+  }
+
+  for (const b of BUILDINGS) {
+    const base = (b.y + b.h) * TILE; // линия опоры здания — его нижняя грань
+    if (base <= feetY) continue;
+    const tx0 = b.x * TILE;
+    const tx1 = (b.x + b.w) * TILE;
+    const ty0 = b.y * TILE;
+    const ty1 = (b.y + b.h) * TILE;
+    if (tx1 <= rx0 || tx0 >= rx1 || ty1 <= ry0 || ty0 >= ry1) continue;
+    drawBuildingArt(ctx, b);
+  }
+}
+
+/* ---------- персонаж (программный placeholder, до загрузки листа) ---------- */
 
 function drawHead(
   ctx: CanvasRenderingContext2D,
@@ -381,23 +541,37 @@ function drawBikeRider(
   drawHead(ctx, cx, cy - 11, dir, colors);
 }
 
+/** Искра при работе (над персонажем). */
+function drawWorkSpark(ctx: CanvasRenderingContext2D, cx: number, cy: number, t: number): void {
+  const sp = (t / 250) % 1;
+  ctx.globalAlpha = Math.max(0, 1 - sp);
+  ctx.fillStyle = "rgba(255, 210, 90, 0.95)";
+  ctx.beginPath();
+  ctx.arc(cx + 9, cy - 24 - sp * 8, 2.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.globalAlpha = 1;
+}
+
 function drawPlayer(ctx: CanvasRenderingContext2D, p: PlayerInfo, t: number): void {
   const cx = (p.x + 0.5) * TILE;
   const cy = (p.y + 0.5) * TILE;
 
-  // тень
-  ctx.fillStyle = "rgba(0,0,0,0.3)";
-  ctx.beginPath();
-  ctx.ellipse(cx, cy + 11, 10, 4.5, 0, 0, Math.PI * 2);
-  ctx.fill();
+  const groundShadow = () => {
+    ctx.fillStyle = "rgba(0,0,0,0.3)";
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + 11, 10, 4.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+  };
 
   if (p.riding) {
+    groundShadow();
     drawBikeRider(ctx, cx, cy, p.dir, p.colors, t);
     return;
   }
 
-  // сон/отдых: лежит на лавке
+  // сон/отдых: лежит на лавке (в листе нет кадра «лёжа» — старый арт)
   if (p.mode === "rest") {
+    groundShadow();
     ctx.fillStyle = p.colors.jacket;
     rrect(ctx, cx - 12, cy - 4, 24, 10, 5);
     ctx.fill();
@@ -415,6 +589,30 @@ function drawPlayer(ctx: CanvasRenderingContext2D, p: PlayerInfo, t: number): vo
     ctx.fillText("z", cx + 10, cy - 16 - z2 * 0.5);
     return;
   }
+
+  // основной путь: спрайт-лист (тень уже внутри кадра листа)
+  if (sheetReady && sheetImg) {
+    drawSheetCharacter(ctx, p, t);
+    if (p.mode === "work") drawWorkSpark(ctx, cx, cy, t);
+    return;
+  }
+
+  // до загрузки листа — старый программный placeholder
+  drawPlayerFallback(ctx, p, t, cx, cy);
+}
+
+/** Старая программная отрисовка тела — только как placeholder до загрузки PNG. */
+function drawPlayerFallback(
+  ctx: CanvasRenderingContext2D,
+  p: PlayerInfo,
+  t: number,
+  cx: number,
+  cy: number
+): void {
+  ctx.fillStyle = "rgba(0,0,0,0.3)";
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + 11, 10, 4.5, 0, 0, Math.PI * 2);
+  ctx.fill();
 
   const moving = p.mode === "walk" || p.mode === "run";
   const workMode = p.mode === "work";
@@ -530,9 +728,13 @@ export function drawFrame(
   }
 
   // персонаж
+  let feetX = (player.x + 0.5) * TILE;
+  let feetY = (player.y + 0.5) * TILE;
   if (state.dead) {
-    const cx = (state.x + 0.5) * TILE;
-    const cy = (state.y + 0.5) * TILE;
+    feetX = (state.x + 0.5) * TILE;
+    feetY = (state.y + 0.5) * TILE;
+    const cx = feetX;
+    const cy = feetY;
     ctx.fillStyle = "rgba(0,0,0,0.3)";
     ctx.beginPath();
     ctx.ellipse(cx, cy + 8, 11, 5, 0, 0, Math.PI * 2);
@@ -551,6 +753,10 @@ export function drawFrame(
   } else {
     drawPlayer(ctx, player, t);
   }
+
+  // depth-проход: объекты и здания, стоящие «перед» ногами персонажа,
+  // перечерчиваются поверх него (Y позиции ног, а не головы)
+  drawForeground(ctx, feetX, feetY);
 
   // слабый свет вокруг персонажа ночью
   if (dark > 0 && !state.dead) {

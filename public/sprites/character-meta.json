@@ -1,0 +1,29 @@
+{
+  "file": "character-sheet.png",
+  "frameWidth": 64,
+  "frameHeight": 96,
+  "columns": 9,
+  "rows": 4,
+  "directions": [
+    "down",
+    "up",
+    "left",
+    "right"
+  ],
+  "columnsOrder": [
+    "idle",
+    "walk1",
+    "walk2",
+    "walk3",
+    "walk4",
+    "run1",
+    "run2",
+    "run3",
+    "run4"
+  ],
+  "sheetWidth": 576,
+  "sheetHeight": 384,
+  "transparent": true,
+  "groundLineY": 86,
+  "notes": "Каждый ряд — направление; колонка 0 — idle, 1-4 — walk, 5-8 — run."
+}
